@@ -322,6 +322,14 @@ def model_from_config(model_config: DictConfig, device:str) -> torch.nn.Module:
         model_config_object = from_dict(LlamaThreeConfig, OmegaConf.to_container(model_config))
         model = LlamaThree(model_config_object)
 
+    # Create a BERT instance for Masked Language Modeling.
+    elif model_type == "bert":
+        print("Creating BertForMaskedLM...")
+        from transformers import BertForMaskedLM, BertConfig
+        # Convert config to BertConfig if needed
+        bert_config = BertConfig(**OmegaConf.to_container(model_config))
+        model = BertForMaskedLM(bert_config)
+
     # Create a TransformerXL instance.
     else:
         raise ValueError(f"Unknown model type: {model_type}")

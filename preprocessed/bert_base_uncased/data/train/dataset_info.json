@@ -1,0 +1,287 @@
+{
+  "builder_name": "json",
+  "citation": "",
+  "config_name": "default",
+  "dataset_name": "json",
+  "dataset_size": 86655743,
+  "description": "",
+  "download_checksums": {
+    "/gpfs/bwfor/work/ws/hd_il278-helibrunna/helibrunna/data/gene_ontology.json": {
+      "num_bytes": 130280183,
+      "checksum": null
+    }
+  },
+  "download_size": 130280183,
+  "features": {
+    "graphs": {
+      "domainRangeAxioms": [
+        {
+          "allValuesFromEdges": [
+            {
+              "obj": {
+                "dtype": "string",
+                "_type": "Value"
+              },
+              "pred": {
+                "dtype": "string",
+                "_type": "Value"
+              },
+              "sub": {
+                "dtype": "string",
+                "_type": "Value"
+              }
+            }
+          ],
+          "domainClassIds": {
+            "feature": {
+              "dtype": "string",
+              "_type": "Value"
+            },
+            "_type": "Sequence"
+          },
+          "predicateId": {
+            "dtype": "string",
+            "_type": "Value"
+          },
+          "rangeClassIds": {
+            "feature": {
+              "dtype": "string",
+              "_type": "Value"
+            },
+            "_type": "Sequence"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "meta": {
+            "basicPropertyValues": [
+              {
+                "pred": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "val": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              }
+            ],
+            "xrefs": [
+              {
+                "val": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              }
+            ]
+          },
+          "obj": {
+            "dtype": "string",
+            "_type": "Value"
+          },
+          "pred": {
+            "dtype": "string",
+            "_type": "Value"
+          },
+          "sub": {
+            "dtype": "string",
+            "_type": "Value"
+          }
+        }
+      ],
+      "equivalentNodesSets": [
+        {
+          "nodeIds": {
+            "feature": {
+              "dtype": "string",
+              "_type": "Value"
+            },
+            "_type": "Sequence"
+          },
+          "representativeNodeId": {
+            "dtype": "string",
+            "_type": "Value"
+          }
+        }
+      ],
+      "id": {
+        "dtype": "string",
+        "_type": "Value"
+      },
+      "logicalDefinitionAxioms": [
+        {
+          "definedClassId": {
+            "dtype": "string",
+            "_type": "Value"
+          },
+          "genusIds": {
+            "feature": {
+              "dtype": "string",
+              "_type": "Value"
+            },
+            "_type": "Sequence"
+          },
+          "restrictions": [
+            {
+              "fillerId": {
+                "dtype": "string",
+                "_type": "Value"
+              },
+              "propertyId": {
+                "dtype": "string",
+                "_type": "Value"
+              }
+            }
+          ]
+        }
+      ],
+      "meta": {
+        "basicPropertyValues": [
+          {
+            "pred": {
+              "dtype": "string",
+              "_type": "Value"
+            },
+            "val": {
+              "dtype": "string",
+              "_type": "Value"
+            }
+          }
+        ],
+        "version": {
+          "dtype": "string",
+          "_type": "Value"
+        }
+      },
+      "nodes": [
+        {
+          "id": {
+            "dtype": "string",
+            "_type": "Value"
+          },
+          "lbl": {
+            "dtype": "string",
+            "_type": "Value"
+          },
+          "meta": {
+            "basicPropertyValues": [
+              {
+                "pred": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "val": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              }
+            ],
+            "comments": {
+              "feature": {
+                "dtype": "string",
+                "_type": "Value"
+              },
+              "_type": "Sequence"
+            },
+            "definition": {
+              "val": {
+                "dtype": "string",
+                "_type": "Value"
+              },
+              "xrefs": {
+                "feature": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "_type": "Sequence"
+              }
+            },
+            "deprecated": {
+              "dtype": "bool",
+              "_type": "Value"
+            },
+            "subsets": {
+              "feature": {
+                "dtype": "string",
+                "_type": "Value"
+              },
+              "_type": "Sequence"
+            },
+            "synonyms": [
+              {
+                "pred": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "synonymType": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "val": {
+                  "dtype": "string",
+                  "_type": "Value"
+                },
+                "xrefs": {
+                  "feature": {
+                    "dtype": "string",
+                    "_type": "Value"
+                  },
+                  "_type": "Sequence"
+                }
+              }
+            ],
+            "xrefs": [
+              {
+                "val": {
+                  "dtype": "string",
+                  "_type": "Value"
+                }
+              }
+            ]
+          },
+          "propertyType": {
+            "dtype": "string",
+            "_type": "Value"
+          },
+          "type": {
+            "dtype": "string",
+            "_type": "Value"
+          }
+        }
+      ],
+      "propertyChainAxioms": [
+        {
+          "chainPredicateIds": {
+            "feature": {
+              "dtype": "string",
+              "_type": "Value"
+            },
+            "_type": "Sequence"
+          },
+          "predicateId": {
+            "dtype": "string",
+            "_type": "Value"
+          }
+        }
+      ]
+    }
+  },
+  "homepage": "",
+  "license": "",
+  "size_in_bytes": 216935926,
+  "splits": {
+    "train": {
+      "name": "train",
+      "num_bytes": 86655743,
+      "num_examples": 1,
+      "dataset_name": "json"
+    }
+  },
+  "version": {
+    "version_str": "0.0.0",
+    "major": 0,
+    "minor": 0,
+    "patch": 0
+  }
+}

@@ -172,8 +172,14 @@ def run_training(config_paths: list[str]):
     vocab_size = tokenizer.vocab_size
     config.model.vocab_size = vocab_size
         
+    # Detect model type for special handling (e.g., BERT/MLM)
+    model_type = config.model.get("type", config.training.get("model_name", "")).lower()
+
     # Create the data collator.
-    data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=False)
+    if model_type == "bert":
+        data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=True, mlm_probability=0.15)
+    else:
+        data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=False)
 
     # Create the model.
     accelerator.print("Creating model...")
@@ -311,27 +317,36 @@ def run_training(config_paths: list[str]):
             # Assuming batch only contains 'input_ids'
             inputs = batch['input_ids'].to(accelerator.device)
 
-            # Get the labels by shifting the inputs. Remove the first token. Fill the last token.
-            labels = torch.roll(inputs, -1, dims=1)
-            labels[:, -1] = fill_token_id
-            
-            # Forward pass.
-            # Use gradient accumulation.
-            with accelerator.accumulate(model):#, torch.autocast(device_type=accelerator.device.type, dtype=training_dtype, enabled=enable_mixed_precision):
+            if model_type == "bert":
+                # For BERT/MLM, labels are the same as inputs, masking is handled by the data collator
+                with accelerator.accumulate(model):
+                    outputs = model(inputs, labels=inputs)
+                    loss = outputs.loss
+                    accelerator.backward(loss)
+                    optimizer.step()
+                    lr_scheduler.step()
+                    optimizer.zero_grad()
+                    running_loss.append(loss.item())
+                    average_loss = sum(running_loss) / len(running_loss)
+            else:
+                # Get the labels by shifting the inputs. Remove the first token. Fill the last token.
+                labels = torch.roll(inputs, -1, dims=1)
+                labels[:, -1] = fill_token_id
+                # Forward pass.
+                with accelerator.accumulate(model):
+                    outputs = model(inputs)
+                    loss = torch.nn.functional.cross_entropy(
+                        outputs.view(-1, vocab_size),
+                        labels.view(-1),
+                        ignore_index=ignore_index,
+                    )
+                    accelerator.backward(loss)
+                    optimizer.step()
+                    lr_scheduler.step()
+                    optimizer.zero_grad()
+                    running_loss.append(loss.item())
+                    average_loss = sum(running_loss) / len(running_loss)
 
-                outputs = model(inputs)
-                loss = torch.nn.functional.cross_entropy(
-                    outputs.view(-1, vocab_size),
-                    labels.view(-1),
-                    ignore_index=ignore_index,
-                )
-                accelerator.backward(loss)
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad()
-                running_loss.append(loss.item())
-                average_loss = sum(running_loss) / len(running_loss)
-            
             # Next step.
             step += 1
 
@@ -347,7 +362,6 @@ def run_training(config_paths: list[str]):
 
             # Log every step.
             if step % log_every_step == 0 and step > 0 and log_every_step > 0 and accelerator.is_local_main_process:
-                
                 # Update the log.
                 last_lr = lr_scheduler.get_last_lr()[0]
                 history["loss"].append(average_loss)
@@ -359,7 +373,6 @@ def run_training(config_paths: list[str]):
                 # Log to wandb.
                 if wandb_project is not None:
                     accelerator.log({"loss": average_loss, "lr": last_lr, "epoch": epoch_fraction}, step=step)
-                
                 # Update the progressbar. Use the step as the total. Also display the loss and lr.
                 progress_bar.set_postfix({"loss": average_loss, "lr": last_lr, "epoch": epoch_fraction})
                 progress_bar.update(log_every_step)
@@ -578,30 +591,33 @@ def preprocess(config, accelerator=None, ask_for_overwrite=False):
     if accelerator.is_local_main_process:
         accelerator.print(f"Loading datasets: {hugging_face_ids}")
         raw_datasets = None
-        
         for dataset_id in hugging_face_ids:
             accelerator.print(f"Downloading dataset: {dataset_id}")
-            current_dataset = load_dataset(dataset_id)
+            if dataset_id.endswith('.json'):
+                current_dataset = load_dataset("json", data_files=dataset_id)
+            elif dataset_id.endswith('.csv'):
+                current_dataset = load_dataset("csv", data_files=dataset_id)
+            else:
+                # Assume HuggingFace Hub dataset (with optional config)
+                if ":" in dataset_id:
+                    ds, config = dataset_id.split(":", 1)
+                    current_dataset = load_dataset(ds, config)
+                else:
+                    current_dataset = load_dataset(dataset_id)
             if raw_datasets is None:
                 raw_datasets = current_dataset
             else:
-                # Combine the datasets
                 for split in raw_datasets:
                     if split in current_dataset:
                         raw_datasets[split] = concatenate_datasets([
                             raw_datasets[split],
                             current_dataset[split]
                         ])
-
-        # Save the combined dataset to disk to be reused by other processes
-        #raw_datasets.save_to_disk(data_path)
-
         # Save the combined dataset to a temporary directory, then move it to the final directory.
         with tempfile.TemporaryDirectory() as tempdir:
             temp_data_path = os.path.join(tempdir, "data")
             raw_datasets.save_to_disk(temp_data_path)
             shutil.move(temp_data_path, data_path)
-
         accelerator.print("Datasets downloaded, combined, and saved.")
     else:
         # Other processes wait for the dataset to be downloaded and saved
