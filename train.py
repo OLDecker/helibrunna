@@ -533,6 +533,9 @@ def preprocess(config, accelerator=None, ask_for_overwrite=False):
 
     # Load the datasets
     hugging_face_ids = config.dataset.hugging_face_ids  # Changed from hugging_face_id to hugging_face_ids
+    print(f"DEBUG hugging_face_ids: {hugging_face_ids} (type: {type(hugging_face_ids)})")
+    if isinstance(hugging_face_ids, str):
+        hugging_face_ids = [hugging_face_ids]
     model_name = config.training.model_name
     preprocessed_path = f"./preprocessed/{model_name}"
     data_path = f"./preprocessed/{model_name}/data"

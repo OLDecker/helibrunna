@@ -30,7 +30,7 @@ model:
 
 
 dataset:
-  hugging_face_id: "TristanBehrens/js-fakes-4bars"
+  hugging_face_ids: "TristanBehrens/js-fakes-4bars"
   
 tokenizer:
   type: "whitespace"

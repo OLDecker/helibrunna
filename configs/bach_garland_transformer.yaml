@@ -25,7 +25,7 @@ model:
   context_length: 2048
 
 dataset:
-  hugging_face_id: "TristanBehrens/bach_garland_2024-100K"
+  hugging_face_ids: "TristanBehrens/bach_garland_2024-100K"
   
 tokenizer:
   type: "whitespace"

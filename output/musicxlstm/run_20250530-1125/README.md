@@ -1,0 +1,85 @@
+---
+language: 
+  - en
+tags:
+  - NLP
+license: mit
+datasets:
+  - T
+  - r
+  - i
+  - s
+  - t
+  - a
+  - n
+  - B
+  - e
+  - h
+  - r
+  - e
+  - n
+  - s
+  - /
+  - j
+  - s
+  - -
+  - f
+  - a
+  - k
+  - e
+  - s
+  - -
+  - 4
+  - b
+  - a
+  - r
+  - s
+base_model: None
+---
+
+# musicxlstm - An xLSTM Model
+
+![Trained with Helibrunna](banner.jpg)
+
+Trained with [Helibrunna](https://github.com/AI-Guru/helibrunna) by [Dr. Tristan Behrens](https://de.linkedin.com/in/dr-tristan-behrens-734967a2).
+
+## Configuration
+
+```
+training:
+  model_name: musicxlstm
+  batch_size: 256
+  lr: 0.001
+  lr_warmup_steps: 2000
+  lr_decay_until_steps: 20000
+  lr_decay_factor: 0.001
+  weight_decay: 0.1
+  amp_precision: bfloat16
+  weight_precision: float32
+  enable_mixed_precision: true
+  num_epochs: 20
+  output_dir: output/musicxlstm
+  save_every_step: 100
+  log_every_step: 10
+  wandb_project: musicxlstm
+  torch_compile: false
+model:
+  num_blocks: 2
+  embedding_dim: 64
+  mlstm_block:
+    mlstm:
+      num_heads: 1
+  slstm_block:
+    slstm:
+      num_heads: 1
+  slstm_at:
+  - 1
+  context_length: 4096
+  vocab_size: 117
+dataset:
+  hugging_face_ids: TristanBehrens/js-fakes-4bars
+tokenizer:
+  type: whitespace
+  fill_token: '[EOS]'
+
+```
