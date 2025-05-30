@@ -1,0 +1,12 @@
+num_blocks: 2
+embedding_dim: 64
+mlstm_block:
+  mlstm:
+    num_heads: 1
+slstm_block:
+  slstm:
+    num_heads: 1
+slstm_at:
+- 1
+context_length: 4096
+vocab_size: 117

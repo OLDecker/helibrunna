@@ -1,0 +1,48 @@
+{
+  "builder_name": "text",
+  "citation": "",
+  "config_name": "default",
+  "dataset_name": "js-fakes-4bars",
+  "dataset_size": 13709310,
+  "description": "",
+  "download_checksums": {
+    "hf://datasets/TristanBehrens/js-fakes-4bars@c5e97b6dd4236a9868df73d6ae176b4ae3efe78c/train.txt": {
+      "num_bytes": 12293735,
+      "checksum": null
+    },
+    "hf://datasets/TristanBehrens/js-fakes-4bars@c5e97b6dd4236a9868df73d6ae176b4ae3efe78c/test.txt": {
+      "num_bytes": 1402138,
+      "checksum": null
+    }
+  },
+  "download_size": 13695873,
+  "features": {
+    "text": {
+      "dtype": "string",
+      "_type": "Value"
+    }
+  },
+  "homepage": "",
+  "license": "",
+  "size_in_bytes": 27405183,
+  "splits": {
+    "train": {
+      "name": "train",
+      "num_bytes": 12305783,
+      "num_examples": 4016,
+      "dataset_name": "js-fakes-4bars"
+    },
+    "test": {
+      "name": "test",
+      "num_bytes": 1403527,
+      "num_examples": 463,
+      "dataset_name": "js-fakes-4bars"
+    }
+  },
+  "version": {
+    "version_str": "0.0.0",
+    "major": 0,
+    "minor": 0,
+    "patch": 0
+  }
+}

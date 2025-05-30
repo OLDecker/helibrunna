@@ -1,0 +1,74 @@
+wandb_version: 1
+
+_wandb:
+  desc: null
+  value:
+    python_version: 3.11.12
+    cli_version: 0.17.6
+    framework: huggingface
+    huggingface_version: 4.44.0
+    is_jupyter_run: false
+    is_kaggle_kernel: false
+    start_time: 1748597483
+    t:
+      1:
+      - 1
+      - 5
+      - 11
+      - 49
+      - 51
+      - 53
+      - 55
+      - 71
+      2:
+      - 1
+      - 5
+      - 11
+      - 49
+      - 51
+      - 53
+      - 55
+      - 71
+      3:
+      - 2
+      - 13
+      - 23
+      - 61
+      4: 3.11.12
+      5: 0.17.6
+      6: 4.44.0
+      8:
+      - 5
+      13: linux-x86_64
+num_blocks:
+  desc: null
+  value: 2
+embedding_dim:
+  desc: null
+  value: 64
+mlstm_block:
+  desc: null
+  value:
+    mlstm:
+      num_heads: 1
+slstm_block:
+  desc: null
+  value:
+    slstm:
+      num_heads: 1
+slstm_at:
+  desc: null
+  value:
+  - 1
+context_length:
+  desc: null
+  value: 4096
+vocab_size:
+  desc: null
+  value: 117
+num_params:
+  desc: null
+  value: 100994
+num_params_human:
+  desc: null
+  value: 101.0K
