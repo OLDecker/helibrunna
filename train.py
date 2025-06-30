@@ -643,12 +643,9 @@ def preprocess(config, accelerator=None, ask_for_overwrite=False):
             tokenizer_id = config.tokenizer.pretrained_id
             accelerator.print(f"Loading pre-trained tokenizer: {tokenizer_id}...")
             tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
-            if tokenizer.pad_token is None and "GPT2TokenizerFast" in str(type(tokenizer)):
-                tokenizer.pad_token = tokenizer.eos_token
-            else:
-                #tokenizer.add_tokens("[PAD]")
-                #tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-                assert False, f"Tokenizer type not supported: {type(tokenizer)}"
+            # Accept any PreTrainedTokenizerFast (including BertTokenizerFast)
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token if hasattr(tokenizer, 'eos_token') and tokenizer.eos_token is not None else '[PAD]'
             tokenizer.save_pretrained(tokenizer_path)
         else:
             while not os.path.exists(f"{tokenizer_path}/tokenizer_config.json"):
