@@ -168,6 +168,8 @@ def run_training(config_paths: list[str]):
         num_classes = len(label_encoder)
         config.model.vocab_size = tokenizer.vocab_size
         config.model.num_classes = num_classes
+        # For classification, the model output should be num_classes, not vocab_size
+        config.model.vocab_size = num_classes  # Override vocab_size for classification
         data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
     else: # Language Modeling
         tokenized_datasets, tokenizer = preprocess(config, accelerator)

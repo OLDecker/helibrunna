@@ -2,10 +2,10 @@
 #SBATCH --partition=gpu-single
 #SBATCH --time=00:10:00
 #SBATCH --mem=32G
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:A100:1
 #SBATCH --job-name=xlstm_test
-#SBATCH --output=training_output_%j.log
-#SBATCH --error=training_error_%j.log
+#SBATCH --output=logs/training_output_%j.log
+#SBATCH --error=logs/training_error_%j.log
 
 # Load conda environment
 module load devel/miniforge
