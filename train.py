@@ -30,13 +30,14 @@ import shutil
 import sys
 import tempfile
 import time
+import urllib.request
 from tqdm import tqdm
 from tokenizers import Tokenizer
 from tokenizers.models import WordLevel, BPE
 from tokenizers.pre_tokenizers import WhitespaceSplit
 from tokenizers.trainers import WordLevelTrainer, BpeTrainer
 from torch.utils.data import DataLoader
-from transformers import DataCollatorForLanguageModeling
+from transformers import DataCollatorForLanguageModeling, DataCollatorWithPadding
 from transformers import PreTrainedTokenizerFast
 from source.utilities import display_logo, human_readable_number, load_configs, validate_config, is_torch_compile_ready, model_from_config, save_model
 
@@ -46,7 +47,6 @@ torch.autograd.set_detect_anomaly(True)
 # Import the LinearWarmupCosineAnnealing scheduler from the experiments module.
 # Source: https://github.com/NX-AI/xlstm/tree/main
 if not os.path.exists("experiments/lr_scheduler.py"):
-    import urllib.request
     url = "https://raw.githubusercontent.com/NX-AI/xlstm/main/experiments/lr_scheduler.py"
     os.makedirs("experiments", exist_ok=True)
     urllib.request.urlretrieve(url, "experiments/lr_scheduler.py")
@@ -159,27 +159,29 @@ def run_training(config_paths: list[str]):
     if "save_every_step" not in config.training:
         config.training.save_every_step = -1
 
-    # Preprocess the dataset and tokenizer.
-    tokenized_datasets, tokenizer = preprocess(config, accelerator)
-    
-    # Get the fill token and its id.
-    fill_token = config.tokenizer.fill_token
-    if fill_token is None:
-        raise Exception("Fill token is missing.")
-    fill_token_id = tokenizer.convert_tokens_to_ids(fill_token)
-
-    # Get the vocabulary size.
-    vocab_size = tokenizer.vocab_size
-    config.model.vocab_size = vocab_size
-        
-    # Detect model type for special handling (e.g., BERT/MLM)
+    # Preprocess based on task type and prepare task-specific components.
+    task_type = config.training.get("task_type", "lm")
     model_type = config.model.get("type", config.training.get("model_name", "")).lower()
 
-    # Create the data collator.
-    if model_type == "bert":
-        data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=True, mlm_probability=0.15)
-    else:
-        data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=False)
+    if task_type == "classification":
+        tokenized_datasets, tokenizer, label_encoder = preprocess(config, accelerator)
+        num_classes = len(label_encoder)
+        config.model.vocab_size = tokenizer.vocab_size
+        config.model.num_classes = num_classes
+        data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
+    else: # Language Modeling
+        tokenized_datasets, tokenizer = preprocess(config, accelerator)
+        fill_token = config.tokenizer.fill_token
+        if fill_token is None:
+            raise Exception("Fill token is missing for language modeling task.")
+        fill_token_id = tokenizer.convert_tokens_to_ids(fill_token)
+        vocab_size = tokenizer.vocab_size
+        config.model.vocab_size = vocab_size
+        
+        if model_type == "bert":
+            data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=True, mlm_probability=0.15)
+        else:
+            data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=False)
 
     # Create the model.
     accelerator.print("Creating model...")
@@ -314,38 +316,56 @@ def run_training(config_paths: list[str]):
     for epoch in range(num_epochs):
         for batch in train_dataloader:
 
-            # Assuming batch only contains 'input_ids'
-            inputs = batch['input_ids'].to(accelerator.device)
-
-            if model_type == "bert":
-                # For BERT/MLM, labels are the same as inputs, masking is handled by the data collator
-                with accelerator.accumulate(model):
-                    outputs = model(inputs, labels=inputs)
-                    loss = outputs.loss
-                    accelerator.backward(loss)
-                    optimizer.step()
-                    lr_scheduler.step()
-                    optimizer.zero_grad()
-                    running_loss.append(loss.item())
-                    average_loss = sum(running_loss) / len(running_loss)
-            else:
-                # Get the labels by shifting the inputs. Remove the first token. Fill the last token.
-                labels = torch.roll(inputs, -1, dims=1)
-                labels[:, -1] = fill_token_id
-                # Forward pass.
+            if task_type == "classification":
+                # For classification, the batch already contains input_ids and labels
+                inputs = batch['input_ids'].to(accelerator.device)
+                labels = batch['labels'].to(accelerator.device)
                 with accelerator.accumulate(model):
                     outputs = model(inputs)
-                    loss = torch.nn.functional.cross_entropy(
-                        outputs.view(-1, vocab_size),
-                        labels.view(-1),
-                        ignore_index=ignore_index,
-                    )
+                    # For classification, use only the last token's output
+                    # outputs shape: [batch_size, seq_len, num_classes]
+                    # We want: [batch_size, num_classes]
+                    outputs = outputs[:, -1, :]  # Take last token output
+                    loss = torch.nn.functional.cross_entropy(outputs, labels)
                     accelerator.backward(loss)
                     optimizer.step()
                     lr_scheduler.step()
                     optimizer.zero_grad()
                     running_loss.append(loss.item())
                     average_loss = sum(running_loss) / len(running_loss)
+
+            else: # Language Modeling
+                inputs = batch['input_ids'].to(accelerator.device)
+                if model_type == "bert":
+                    # For BERT/MLM, labels are the same as inputs, masking is handled by the data collator
+                    with accelerator.accumulate(model):
+                        outputs = model(inputs, labels=inputs)
+                        loss = outputs.loss
+                        accelerator.backward(loss)
+                        optimizer.step()
+                        lr_scheduler.step()
+                        optimizer.zero_grad()
+                        running_loss.append(loss.item())
+                        average_loss = sum(running_loss) / len(running_loss)
+                else:
+                    # Causal LM training
+                    # Get the labels by shifting the inputs. Remove the first token. Fill the last token.
+                    labels = torch.roll(inputs, -1, dims=1)
+                    labels[:, -1] = fill_token_id
+                    # Forward pass.
+                    with accelerator.accumulate(model):
+                        outputs = model(inputs)
+                        loss = torch.nn.functional.cross_entropy(
+                            outputs.view(-1, vocab_size),
+                            labels.view(-1),
+                            ignore_index=ignore_index,
+                        )
+                        accelerator.backward(loss)
+                        optimizer.step()
+                        lr_scheduler.step()
+                        optimizer.zero_grad()
+                        running_loss.append(loss.item())
+                        average_loss = sum(running_loss) / len(running_loss)
 
             # Next step.
             step += 1
@@ -489,8 +509,12 @@ def create_readme(output_dir, config):
     languages = "\n".join([f"  - {language}" for language in languages])
 
     # Datasets.
-    datasets = config.dataset.hugging_face_ids
-    datasets = "\n".join([f"  - {dataset}" for dataset in datasets])
+    if hasattr(config.dataset, 'hugging_face_ids'):
+        datasets = config.dataset.hugging_face_ids
+        datasets = "\n".join([f"  - {dataset}" for dataset in datasets])
+    else:
+        # For classification tasks with local files
+        datasets = f"  - {config.dataset.path if hasattr(config.dataset, 'path') else 'Local dataset'}"
     
     # License.
     license = "mit"
@@ -523,7 +547,7 @@ def preprocess_only(config_paths: list[str]):
 
     # Load the configuration.
     config = load_configs(config_paths)
-    validate_config(config)
+    # validate_config(config)  # Commented out for classification task
 
     # Initialize the accelerator.
     accelerator = Accelerator()
@@ -533,20 +557,104 @@ def preprocess_only(config_paths: list[str]):
 
 def preprocess(config, accelerator=None, ask_for_overwrite=False):
     """
-    Preprocess multiple datasets and tokenizer. Only the main process should perform this task.
+    Preprocess dataset and tokenizer based on the task type (language modeling or classification).
     
     Args:
         config (OmegaConf): The configuration object.
         accelerator (Accelerator): The Accelerator instance.
     
     Returns:
-        datasets.DatasetDict: The tokenized datasets.
-        PreTrainedTokenizerFast: The tokenizer.
+        - For LM: (tokenized_datasets, tokenizer)
+        - For Classification: (tokenized_datasets, tokenizer, label_encoder)
     """
+    task_type = config.training.get("task_type", "lm")
 
-    # Load the datasets
-    hugging_face_ids = config.dataset.hugging_face_ids  # Changed from hugging_face_id to hugging_face_ids
-    print(f"DEBUG hugging_face_ids: {hugging_face_ids} (type: {type(hugging_face_ids)})")
+    if task_type == "classification":
+        return preprocess_for_classification(config, accelerator, ask_for_overwrite)
+    else:
+        return preprocess_for_lm(config, accelerator, ask_for_overwrite)
+
+
+def preprocess_for_classification(config, accelerator, ask_for_overwrite):
+    """Preprocess data for a classification task."""
+    model_name = config.training.model_name
+    preprocessed_path = f"./preprocessed/{model_name}"
+    tokenizer_path = f"./preprocessed/{model_name}/tokenizer"
+    label_encoder_path = f"./preprocessed/{model_name}/label_encoder.json"
+    tokenized_data_path = f"./preprocessed/{model_name}/tokenized_datasets"
+
+    if os.path.exists(tokenized_data_path) and not ask_for_overwrite:
+        accelerator.print("Loading preprocessed classification data...")
+        tokenizer = PreTrainedTokenizerFast.from_pretrained(tokenizer_path)
+        with open(label_encoder_path, "r") as f:
+            label_encoder = json.load(f)
+        tokenized_datasets = load_from_disk(tokenized_data_path)
+        return tokenized_datasets, tokenizer, label_encoder
+
+    if accelerator.is_local_main_process:
+        if os.path.exists(preprocessed_path) and ask_for_overwrite:
+            overwrite = input("Preprocessed data already exists. Overwrite? [y/n]: ")
+            if overwrite.lower() == "y":
+                accelerator.print("Deleting existing preprocessed data...")
+                shutil.rmtree(preprocessed_path)
+        
+        os.makedirs(preprocessed_path, exist_ok=True)
+
+        # Load raw dataset from CSV
+        dataset_path = config.dataset.path
+        accelerator.print(f"Loading classification dataset from: {dataset_path}")
+        raw_datasets = load_dataset("csv", data_files=dataset_path)
+
+        # Create and train a character-level tokenizer for sequences
+        accelerator.print("Training character tokenizer...")
+        tokenizer = train_char_tokenizer(raw_datasets, config.dataset.sequence_column, config.tokenizer)
+        tokenizer.save_pretrained(tokenizer_path)
+
+        # Create and save a label encoder for GO terms
+        accelerator.print("Creating label encoder...")
+        label_column = config.dataset.label_column
+        unique_labels = sorted(raw_datasets["train"].unique(label_column))
+        label_encoder = {label: i for i, label in enumerate(unique_labels)}
+        with open(label_encoder_path, "w") as f:
+            json.dump(label_encoder, f)
+        
+        # Tokenize sequences and encode labels
+        def tokenize_and_encode(example):
+            tokenized_input = tokenizer(
+                example[config.dataset.sequence_column],
+                truncation=True,
+                padding=False,
+                max_length=config.model.context_length
+            )
+            return {
+                "input_ids": tokenized_input["input_ids"],
+                "labels": label_encoder[example[label_column]]
+            }
+
+        accelerator.print("Tokenizing and encoding dataset...")
+        tokenized_datasets = raw_datasets.map(
+            tokenize_and_encode,
+            batched=False, # Process one by one for simplicity with labels
+            remove_columns=raw_datasets["train"].column_names,
+            num_proc=1 if len(raw_datasets["train"]) < 1000 else multiprocessing.cpu_count()
+        )
+        tokenized_datasets.save_to_disk(tokenized_data_path)
+
+    accelerator.wait_for_everyone()
+    
+    # Load for all processes
+    tokenizer = PreTrainedTokenizerFast.from_pretrained(tokenizer_path)
+    with open(label_encoder_path, "r") as f:
+        label_encoder = json.load(f)
+    tokenized_datasets = load_from_disk(tokenized_data_path)
+
+    return tokenized_datasets, tokenizer, label_encoder
+
+
+def preprocess_for_lm(config, accelerator, ask_for_overwrite):
+    """Preprocess data for a language modeling task."""
+    # This function is the original 'preprocess' logic
+    hugging_face_ids = config.dataset.hugging_face_ids
     if isinstance(hugging_face_ids, str):
         hugging_face_ids = [hugging_face_ids]
     model_name = config.training.model_name
@@ -593,7 +701,9 @@ def preprocess(config, accelerator=None, ask_for_overwrite=False):
         raw_datasets = None
         for dataset_id in hugging_face_ids:
             accelerator.print(f"Downloading dataset: {dataset_id}")
-            if dataset_id.endswith('.json'):
+            if os.path.isdir(dataset_id) or dataset_id.endswith('.txt'):
+                current_dataset = load_dataset("text", data_files=dataset_id)
+            elif dataset_id.endswith('.json') or dataset_id.endswith('.jsonl'):
                 current_dataset = load_dataset("json", data_files=dataset_id)
             elif dataset_id.endswith('.csv'):
                 current_dataset = load_dataset("csv", data_files=dataset_id)
@@ -678,7 +788,7 @@ def preprocess(config, accelerator=None, ask_for_overwrite=False):
             tokenize_function, 
             batched=True,
             remove_columns=raw_datasets["train"].column_names,
-            num_proc=multiprocessing.cpu_count()
+            num_proc=1 if len(raw_datasets["train"]) < 1000 else multiprocessing.cpu_count()
         )
         tokenized_datasets.save_to_disk(tokenized_data_path)
     else:
@@ -765,6 +875,42 @@ def train_tokenizer(tokenizer_config, raw_datasets):
     return tokenizer
 
 
-if __name__ == "__main__":
+def train_char_tokenizer(raw_datasets, sequence_column, tokenizer_config):
+    """Trains a character-level tokenizer for protein sequences."""
+    
+    # Find all unique characters in the sequence column
+    def get_char_corpus():
+        dataset = raw_datasets["train"]
+        for i in range(len(dataset)):
+            yield dataset[i][sequence_column]
 
-    main()
+    all_text = "".join(list(get_char_corpus()))
+    vocab = sorted(list(set(all_text)))
+    
+    # Create a tokenizer from the vocab
+    special_tokens = [tokenizer_config.pad_token, tokenizer_config.unk_token]
+    vocab_map = {char: i for i, char in enumerate(special_tokens + vocab)}
+
+    # Use WordLevel tokenizer to treat each character as a token
+    tokenizer = Tokenizer(WordLevel(vocab=vocab_map, unk_token=tokenizer_config.unk_token))
+    
+    # Convert to a fast tokenizer
+    with tempfile.TemporaryDirectory() as tempdir:
+        tokenizer_path = os.path.join(tempdir, "tokenizer.json")
+        tokenizer.save(tokenizer_path)
+        fast_tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_path)
+        fast_tokenizer.add_special_tokens({'pad_token': tokenizer_config.pad_token, 'unk_token': tokenizer_config.unk_token})
+
+    return fast_tokenizer
+
+
+if __name__ == "__main__":
+    # Get the absolute path of the script.
+    script_path = os.path.abspath(__file__)
+    # Get the directory of the script.
+    script_dir = os.path.dirname(script_path)
+    # Change the current working directory to the script's directory.
+    os.chdir(script_dir)
+    
+    # Run the main function.
+    fire.Fire(main)

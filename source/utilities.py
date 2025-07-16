@@ -137,41 +137,25 @@ def load_config(config_path: str) -> OmegaConf:
     return config
 
 
-def load_configs(config_paths: str) -> OmegaConf:
+def load_configs(config_paths: List[str]) -> DictConfig:
     """
-    Load and merge configurations from the specified paths.
-    Args:
-        config_paths (str): The paths to the configuration files.
+    Load multiple OmegaConf configurations from a list of paths and merge them.
 
-    Raises:
-        FileNotFoundError: If any of the configuration files are not found.
+    Args:
+        config_paths (List[str]): A list of paths to the configuration files.
+
     Returns:
-        OmegaConf: The merged configuration object.
+        DictConfig: The merged configuration.
     """
     
-    merged_config = OmegaConf.create()
-
+    # Load the configurations and merge them.
+    config = OmegaConf.create()
     for config_path in config_paths:
         if not os.path.exists(config_path):
-            raise FileNotFoundError(f"Config file not found: {config_path}")
-        
-        with open(config_path, "r") as f:
-            config_yaml = f.read()
-        
-        new_config = OmegaConf.create(config_yaml)
-        OmegaConf.resolve(new_config)
-
-        # Detect and warn about overwrites
-        for key, value in new_config.items():
-            if key in merged_config:
-                if isinstance(value, DictConfig) and isinstance(merged_config[key], DictConfig):
-                    # Merge nested configurations
-                    OmegaConf.merge(merged_config[key], value)
-                else:
-                    print(f"Warning: Overwriting '{key}' from '{merged_config[key]}' to '{value}' in config file: {config_path}")
-            merged_config[key] = value
-    
-    return merged_config
+            raise FileNotFoundError(f"The configuration file is missing: {config_path}")
+        loaded_config = OmegaConf.load(config_path)
+        config = OmegaConf.merge(config, loaded_config)
+    return config
 
 
 def validate_config(config: DictConfig):
