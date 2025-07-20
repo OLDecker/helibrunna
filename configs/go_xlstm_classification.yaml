@@ -1,6 +1,3 @@
-
-
-
 training:
   model_name: "protein_go_xlstm"
   task_type: "classification"
@@ -42,8 +39,8 @@ dataset:
 
   
 tokenizer:
-  type: "char"
-  fill_token: "[PAD]"
+  type: "file"
+  path: "configs/protein_vocab.txt"
   pad_token: "[PAD]"
   unk_token: "[UNK]"
 
