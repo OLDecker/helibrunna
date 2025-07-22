@@ -1,0 +1,45 @@
+training:
+  model_name: "xlstm_uniparc_pretrain"
+  task_type: "lm"  # Language modeling
+  batch_size: 16
+  lr: 5e-5
+  lr_warmup_steps: 500
+  lr_decay_until_steps: 200000
+  lr_decay_factor: 0.1
+  weight_decay: 0.01
+  amp_precision: bfloat16
+  weight_precision: float32
+  enable_mixed_precision: true
+  num_epochs: 1  # Large dataset, one epoch should be enough
+  output_dir: "output/xlstm_uniparc_pretrain"
+  save_every_step: 10000
+  log_every_step: 100
+  wandb_project: "xlstm_uniparc_pretrain"
+  torch_compile: false
+
+model:
+  type: "xLSTMLMModel"
+  num_blocks: 12  # Match BERT-base architecture
+  embedding_dim: 768  # Match BERT-base
+  mlstm_block:
+    mlstm:
+      num_heads: 12  # Match BERT-base
+  slstm_block:
+    slstm:
+      num_heads: 12
+  slstm_at: [3, 6, 9]  # Strategic placement like BERT layers
+  context_length: 512  # Match BERT's sequence length
+
+dataset:
+  # UniParc H5 files for language modeling
+  train_path: "/gpfs/bwfor/work/ws/hd_il278-protein_go_term_prediction/protein_go_term_prediction/data/data/uniparc/uniparc_train_sorted.h5"
+  valid_path: "/gpfs/bwfor/work/ws/hd_il278-protein_go_term_prediction/protein_go_term_prediction/data/data/uniparc/uniparc_valid_sorted.h5"
+  test_path: "/gpfs/bwfor/work/ws/hd_il278-protein_go_term_prediction/protein_go_term_prediction/data/data/uniparc/uniparc_test_sorted.h5"
+  
+tokenizer:
+  type: "file"
+  path: "configs/protein_vocab.txt"
+  pad_token: "[PAD]"
+  unk_token: "[UNK]"
+  mask_token: "[MASK]"
+  fill_token: "[PAD]"

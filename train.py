@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 import torch
 from accelerate import Accelerator
 from dacite import from_dict
-from datasets import load_dataset, load_from_disk, concatenate_datasets
+from datasets import load_dataset, load_from_disk, concatenate_datasets, Dataset
 import fire
 import hashlib
 import json
@@ -40,6 +40,14 @@ from torch.utils.data import DataLoader
 from transformers import DataCollatorForLanguageModeling, DataCollatorWithPadding
 from transformers import PreTrainedTokenizerFast
 from source.utilities import display_logo, human_readable_number, load_configs, validate_config, is_torch_compile_ready, model_from_config, save_model
+
+# Try to import h5py for H5 file support
+try:
+    import h5py
+    import pandas as pd
+    HAS_H5PY = True
+except ImportError:
+    HAS_H5PY = False
 
 import torch
 torch.autograd.set_detect_anomaly(True)
@@ -655,6 +663,194 @@ def preprocess_for_classification(config, accelerator, ask_for_overwrite):
 
 def preprocess_for_lm(config, accelerator, ask_for_overwrite):
     """Preprocess data for a language modeling task."""
+    # Check if we have H5 files or HuggingFace IDs
+    if hasattr(config.dataset, 'train_path') and config.dataset.train_path.endswith('.h5'):
+        return preprocess_for_lm_h5(config, accelerator, ask_for_overwrite)
+    else:
+        return preprocess_for_lm_huggingface(config, accelerator, ask_for_overwrite)
+
+
+def preprocess_for_lm_h5(config, accelerator, ask_for_overwrite):
+    """Preprocess H5 data for language modeling task."""
+    if not HAS_H5PY:
+        raise ImportError("h5py and pandas are required for H5 file support. Please install them: pip install h5py pandas")
+    
+    model_name = config.training.model_name
+    preprocessed_path = f"./preprocessed/{model_name}"
+    tokenizer_path = f"./preprocessed/{model_name}/tokenizer"
+    tokenized_data_path = f"./preprocessed/{model_name}/tokenized_datasets"
+    checksum_path = f"./preprocessed/{model_name}/checksum.txt"
+
+    # Compute the checksum from the configuration
+    checksum = compute_checksum_from_config(config)
+
+    # Compare the checksum. If the checksum is different, delete the preprocessed data
+    preprocess_anyway = False
+    if os.path.exists(checksum_path) and os.path.exists(tokenized_data_path):
+        with open(checksum_path, "r") as f:
+            checksum_from_file = f.read()
+        if checksum_from_file != checksum:
+            accelerator.print("Checksum mismatch. Preprocessing anyway...")
+            preprocess_anyway = True
+
+    # Check if preprocessed data exists and is valid
+    if not preprocess_anyway and os.path.exists(tokenized_data_path) and os.path.exists(tokenizer_path):
+        accelerator.print("Preprocessed data found. Loading...")
+    else:
+        if os.path.exists(preprocessed_path):
+            if ask_for_overwrite:
+                overwrite = input("Preprocessed data exists. Overwrite? (y/n): ")
+                if overwrite.lower() != "y":
+                    accelerator.print("Exiting...")
+                    return None, None
+            accelerator.print("Deleting existing preprocessed data...")
+            shutil.rmtree(preprocessed_path)
+        
+        os.makedirs(preprocessed_path, exist_ok=True)
+
+        # Load H5 datasets for language modeling
+        accelerator.print(f"Loading H5 datasets for language modeling...")
+        
+        def load_h5_as_dataset(h5_path, max_sequences=10000):
+            """Load H5 file with raw_data_X structure and convert to HuggingFace Dataset."""
+            accelerator.print(f"Loading H5 file: {h5_path}")
+            
+            # Read H5 file - original structure with raw_data_X datasets
+            sequences = []
+            with h5py.File(h5_path, 'r') as f:
+                # Print H5 structure for debugging
+                accelerator.print(f"H5 file keys: {list(f.keys())}")
+                
+                # Original UniParc format has datasets named raw_data_X
+                raw_data_keys = [key for key in f.keys() if key.startswith('raw_data_')]
+                accelerator.print(f"Found raw_data datasets: {raw_data_keys}")
+                
+                total_loaded = 0
+                for dataset_name in raw_data_keys:
+                    if total_loaded >= max_sequences:
+                        break
+                        
+                    accelerator.print(f"Loading from dataset: {dataset_name}")
+                    dataset = f[dataset_name]
+                    
+                    # Check the structure of this dataset
+                    accelerator.print(f"Dataset {dataset_name} shape: {dataset.shape}")
+                    accelerator.print(f"Dataset {dataset_name} dtype: {dataset.dtype}")
+                    
+                    # Sample a few entries to understand the structure
+                    sample_size = min(max_sequences - total_loaded, len(dataset), 1000)
+                    accelerator.print(f"Sampling {sample_size} sequences from {len(dataset)} in {dataset_name}")
+                    
+                    for i in range(sample_size):
+                        if total_loaded >= max_sequences:
+                            break
+                            
+                        entry = dataset[i]
+                        
+                        # Handle numpy structured array entries (protein_id, sequence)
+                        if hasattr(entry, 'item') and isinstance(entry.item(), tuple):
+                            # This is a numpy void object containing (protein_id, sequence)
+                            protein_id, sequence = entry.item()
+                            
+                            # Decode bytes to string if necessary
+                            if isinstance(sequence, bytes):
+                                sequence = sequence.decode('utf-8')
+                            if isinstance(protein_id, bytes):
+                                protein_id = protein_id.decode('utf-8')
+                                
+                            sequences.append(sequence)
+                            
+                        elif isinstance(entry, (tuple, list)) and len(entry) >= 2:
+                            # Format: (protein_id, sequence) or similar
+                            protein_id, sequence = entry[0], entry[1]
+                            
+                            # Decode bytes to string if necessary
+                            if isinstance(sequence, bytes):
+                                sequence = sequence.decode('utf-8')
+                            if isinstance(protein_id, bytes):
+                                protein_id = protein_id.decode('utf-8')
+                                
+                            sequences.append(sequence)
+                            
+                        elif hasattr(entry, 'shape'):
+                            # Pre-tokenized sequence as array
+                            if len(entry.shape) == 1:
+                                # 1D array of token IDs - convert back to space-separated string
+                                sequences.append(' '.join(map(str, entry)))
+                            else:
+                                accelerator.print(f"Unexpected entry shape: {entry.shape}")
+                                continue
+                                
+                        else:
+                            # Try to treat as string sequence directly
+                            if isinstance(entry, bytes):
+                                entry = entry.decode('utf-8')
+                            sequences.append(str(entry))
+                        
+                        total_loaded += 1
+                
+                accelerator.print(f"Loaded {len(sequences)} sequences from {h5_path}")
+                
+                if not sequences:
+                    raise ValueError(f"Could not find sequence data in H5 file: {h5_path}")
+                
+                # Show a sample for debugging
+                if sequences:
+                    accelerator.print(f"Sample sequence: {sequences[0][:100]}...")
+                
+                return Dataset.from_dict({"text": sequences})
+        
+        # Load train dataset with limited sequences for testing
+        train_path = config.dataset.train_path
+        raw_datasets = {"train": load_h5_as_dataset(train_path, max_sequences=1000)}
+        
+        # Load validation and test if provided
+        if hasattr(config.dataset, 'valid_path') and config.dataset.valid_path:
+            raw_datasets["validation"] = load_h5_as_dataset(config.dataset.valid_path, max_sequences=500)
+        if hasattr(config.dataset, 'test_path') and config.dataset.test_path:
+            raw_datasets["test"] = load_h5_as_dataset(config.dataset.test_path, max_sequences=500)
+        
+        # Create tokenizer
+        tokenizer = create_tokenizer(config.tokenizer)
+        tokenizer.save_pretrained(tokenizer_path)
+
+        # Tokenize datasets
+        def tokenize_function(examples):
+            return tokenizer(examples["text"], truncation=True, padding=False, max_length=config.model.context_length)
+
+        accelerator.print("Tokenizing datasets...")
+        tokenized_datasets = {}
+        for split_name, dataset in raw_datasets.items():
+            accelerator.print(f"Tokenizing {split_name} split...")
+            tokenized_datasets[split_name] = dataset.map(
+                tokenize_function,
+                batched=True,
+                remove_columns=dataset.column_names,
+                num_proc=1 if len(dataset) < 1000 else min(4, multiprocessing.cpu_count())
+            )
+        
+        # Convert to datasets object
+        from datasets import DatasetDict
+        tokenized_datasets = DatasetDict(tokenized_datasets)
+        
+        # Save tokenized datasets
+        tokenized_datasets.save_to_disk(tokenized_data_path)
+        
+        # Save checksum
+        with open(checksum_path, "w") as f:
+            f.write(checksum)
+
+    accelerator.wait_for_everyone()
+    
+    # Load for all processes
+    tokenizer = PreTrainedTokenizerFast.from_pretrained(tokenizer_path)
+    tokenized_datasets = load_from_disk(tokenized_data_path)
+
+    return tokenized_datasets, tokenizer
+
+
+def preprocess_for_lm_huggingface(config, accelerator, ask_for_overwrite):
+    """Preprocess HuggingFace data for a language modeling task."""
     # This function is the original 'preprocess' logic
     hugging_face_ids = config.dataset.hugging_face_ids
     if isinstance(hugging_face_ids, str):
@@ -822,7 +1018,15 @@ def compute_checksum_from_config(config):
     checksum_string = "HeliBrunna - A HuggingFace compatible xLSTM trainer by Dr. Tristan Behrens\n"
     checksum_string += "Configuration:\n"
     checksum_string += f"training batch size: {config_dict['training']['batch_size']}\n"
-    checksum_string += f"datasets: {','.join(config_dict['dataset']['hugging_face_ids'])}\n"  # Updated this line
+    
+    # Handle different dataset formats
+    if 'hugging_face_ids' in config_dict['dataset']:
+        checksum_string += f"datasets: {','.join(config_dict['dataset']['hugging_face_ids'])}\n"
+    elif 'train_path' in config_dict['dataset']:
+        checksum_string += f"train_path: {config_dict['dataset']['train_path']}\n"
+    elif 'path' in config_dict['dataset']:
+        checksum_string += f"dataset_path: {config_dict['dataset']['path']}\n"
+    
     checksum_string += f"Have a pleasant day!\n"
 
     # Compute the checksum. Use MD5
@@ -875,6 +1079,45 @@ def train_tokenizer(tokenizer_config, raw_datasets):
 
     # Return the tokenizer.
     return tokenizer
+
+
+def create_tokenizer(tokenizer_config):
+    """Create tokenizer based on config."""
+    if tokenizer_config.type == "file":
+        # Load vocabulary from file
+        vocab_path = tokenizer_config.path
+        with open(vocab_path, 'r') as f:
+            vocab = [line.strip() for line in f if line.strip()]
+        
+        vocab_map = {token: i for i, token in enumerate(vocab)}
+        tokenizer = Tokenizer(WordLevel(vocab=vocab_map, unk_token=tokenizer_config.unk_token))
+        
+        # Convert to fast tokenizer
+        with tempfile.TemporaryDirectory() as tempdir:
+            tokenizer_path = os.path.join(tempdir, "tokenizer.json")
+            tokenizer.save(tokenizer_path)
+            fast_tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_path)
+            
+            # Add special tokens
+            special_tokens = {}
+            if hasattr(tokenizer_config, 'pad_token'):
+                special_tokens['pad_token'] = tokenizer_config.pad_token
+            if hasattr(tokenizer_config, 'unk_token'):
+                special_tokens['unk_token'] = tokenizer_config.unk_token
+            if hasattr(tokenizer_config, 'mask_token'):
+                special_tokens['mask_token'] = tokenizer_config.mask_token
+            
+            if special_tokens:
+                fast_tokenizer.add_special_tokens(special_tokens)
+        
+        return fast_tokenizer
+    
+    elif tokenizer_config.type == "char":
+        # Character-level tokenizer (for backward compatibility)
+        return train_char_tokenizer(None, None, tokenizer_config)
+    
+    else:
+        raise ValueError(f"Unsupported tokenizer type: {tokenizer_config.type}")
 
 
 def train_char_tokenizer(raw_datasets, sequence_column, tokenizer_config):
