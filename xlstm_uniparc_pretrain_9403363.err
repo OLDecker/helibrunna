@@ -1,0 +1,36 @@
+Detected kernel version 4.18.0, which is below the recommended minimum of 5.5.0; this can cause the process to hang. It is recommended to upgrade the kernel to the minimum version or higher.
+Using /gpfs/bwfor/home/hd/hd_hd/hd_il278/.cache/torch_extensions/py311_cu121 as PyTorch extensions root...
+Detected CUDA files, patching ldflags
+Emitting ninja build file /gpfs/bwfor/home/hd/hd_hd/hd_il278/.cache/torch_extensions/py311_cu121/slstm_HS768BS8NH12NS4DBfDRbDWbDGbDSbDAfNG4SA1GRCV0GRC0d0FCV0FC0d0/build.ninja...
+/home/hd/hd_hd/hd_il278/.conda/envs/xlstm/lib/python3.11/site-packages/torch/utils/cpp_extension.py:1965: UserWarning: TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'].
+  warnings.warn(
+Building extension module slstm_HS768BS8NH12NS4DBfDRbDWbDGbDSbDAfNG4SA1GRCV0GRC0d0FCV0FC0d0...
+Allowing ninja to set a default number of workers... (overridable by setting the environment variable MAX_JOBS=N)
+Loading extension module slstm_HS768BS8NH12NS4DBfDRbDWbDGbDSbDAfNG4SA1GRCV0GRC0d0FCV0FC0d0...
+/home/hd/hd_hd/hd_il278/.conda/envs/xlstm/lib/python3.11/site-packages/xlstm/blocks/slstm/cell.py:543: FutureWarning: `torch.cuda.amp.custom_fwd(args...)` is deprecated. Please use `torch.amp.custom_fwd(args..., device_type='cuda')` instead.
+  @conditional_decorator(
+/home/hd/hd_hd/hd_il278/.conda/envs/xlstm/lib/python3.11/site-packages/xlstm/blocks/slstm/cell.py:568: FutureWarning: `torch.cuda.amp.custom_bwd(args...)` is deprecated. Please use `torch.amp.custom_bwd(args..., device_type='cuda')` instead.
+  @conditional_decorator(
+Using /gpfs/bwfor/home/hd/hd_hd/hd_il278/.cache/torch_extensions/py311_cu121 as PyTorch extensions root...
+No modifications detected for re-loaded extension module slstm_HS768BS8NH12NS4DBfDRbDWbDGbDSbDAfNG4SA1GRCV0GRC0d0FCV0FC0d0, skipping build step...
+Loading extension module slstm_HS768BS8NH12NS4DBfDRbDWbDGbDSbDAfNG4SA1GRCV0GRC0d0FCV0FC0d0...
+Using /gpfs/bwfor/home/hd/hd_hd/hd_il278/.cache/torch_extensions/py311_cu121 as PyTorch extensions root...
+No modifications detected for re-loaded extension module slstm_HS768BS8NH12NS4DBfDRbDWbDGbDSbDAfNG4SA1GRCV0GRC0d0FCV0FC0d0, skipping build step...
+Loading extension module slstm_HS768BS8NH12NS4DBfDRbDWbDGbDSbDAfNG4SA1GRCV0GRC0d0FCV0FC0d0...
+wandb: Currently logged in as: ole-decker-od (ole-decker-od-heidelberg-university). Use `wandb login --relogin` to force relogin
+wandb: wandb version 0.21.0 is available!  To upgrade, please run:
+wandb:  $ pip install wandb --upgrade
+wandb: Tracking run with wandb version 0.17.6
+wandb: Run data is saved locally in /gpfs/bwfor/work/ws/hd_il278-helibrunna/helibrunna/wandb/run-20250722_122549-tgyii25v
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run run_20250722-1225-xlstm_uniparc_pretrain
+wandb: ⭐️ View project at https://wandb.ai/ole-decker-od-heidelberg-university/xlstm_uniparc_pretrain
+wandb: 🚀 View run at https://wandb.ai/ole-decker-od-heidelberg-university/xlstm_uniparc_pretrain/runs/tgyii25v
+Training:   0%|[32m          [0m| 0/62 [00:00<?, ?step/s]Training:   0%|[32m          [0m| 0/62 [00:28<?, ?step/s]
+wandb: - 0.007 MB of 0.007 MB uploadedwandb: \ 0.007 MB of 0.007 MB uploadedwandb: | 0.025 MB of 0.025 MB uploadedwandb:                                                                                
+wandb: 🚀 View run run_20250722-1225-xlstm_uniparc_pretrain at: https://wandb.ai/ole-decker-od-heidelberg-university/xlstm_uniparc_pretrain/runs/tgyii25v
+wandb: ⭐️ View project at: https://wandb.ai/ole-decker-od-heidelberg-university/xlstm_uniparc_pretrain
+wandb: Synced 6 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20250722_122549-tgyii25v/logs
+wandb: WARNING The new W&B backend becomes opt-out in version 0.18.0; try it out with `wandb.require("core")`! See https://wandb.me/wandb-core for more information.

@@ -65,36 +65,16 @@ os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
 
 
-def main():
+def main(*config_paths, preprocess=False):
     """
-    Main function to run the training process.
+    Main function to run the training process, compatible with python-fire.
 
     Args:
+        *config_paths (str): The paths to the configuration files.
         preprocess (bool): Whether to only preprocess the dataset and tokenizer.
-        config_paths (str): The paths to the configuration files.
-    Raises:
-
-    Returns:
-        None
     """
-
-    # Parse the arguments.
-    arguments = sys.argv[1:]
-
-    # Raise an error if no arguments are provided.
-    if len(arguments) == 0:
-        print("No arguments provided.")
-        sys.exit(1)
-
-    # See if the first argument is "preprocess".
-    if arguments[0] == "preprocess":
-        preprocess = True
-        arguments = arguments[1:]
-    else:
-        preprocess = False
-
-    # All the remaining arguments are configuration files.
-    config_paths = arguments
+    # Convert tuple to list
+    config_paths = list(config_paths)
 
     # Check if any configuration files are provided.
     if len(config_paths) == 0:
