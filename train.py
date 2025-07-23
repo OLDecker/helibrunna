@@ -450,6 +450,21 @@ def run_training(config_paths: list[str]):
     # Create the model.
     accelerator.print("Creating model...")
     model = model_from_config(config.model, device=accelerator.device)
+
+    # If the task is multilabel classification, swap the head of the model.
+    if task_type == "multilabel_classification":
+        accelerator.print("Swapping model head for multilabel classification...")
+        # Get the hidden size from the model's configuration.
+        # The lm_head of the xLSTM model has shape (hidden_size, vocab_size).
+        hidden_size = model.lm_head.in_features
+        
+        # Create a new head for classification.
+        new_head = torch.nn.Linear(hidden_size, num_classes)
+        
+        # Replace the old head with the new one.
+        model.lm_head = new_head
+        accelerator.print(f"Model head swapped. New head: {model.lm_head}")
+
     #model = model.to(device=accelerator.device)
     #model.reset_parameters()
 
