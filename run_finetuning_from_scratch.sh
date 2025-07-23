@@ -8,12 +8,9 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 
-# Create logs directory if it doesn't exist
-mkdir -p logs
-
 # Activate Conda environment
 source /etc/profile.d/conda.sh
 mamba activate xlstm
 
 # Run the training from scratch script
-$CONDA_PREFIX/bin/python train.py --config_file configs/xlstm_uniprot_multilabel_from_scratch.yaml
+$CONDA_PREFIX/bin/python train.py configs/xlstm_uniprot_multilabel_from_scratch.yaml

@@ -138,6 +138,101 @@ class H5SequenceDataset(TorchDataset):
             return str(sequence)
 
 
+class H5MultilabelClassificationDataset(TorchDataset):
+    """
+    A PyTorch Dataset for multilabel classification that reads sequences from a CSV
+    and corresponding multi-hot encoded labels from an HDF5 file where labels are
+    stored as pandas DataFrames.
+    """
+    def __init__(self, csv_path: str, h5_path: str, sequence_column: str, id_column: str, accelerator, separator: str = '\t'):
+        self.accelerator = accelerator
+        self.sequence_column = sequence_column
+        self.id_column = id_column
+
+        # Load sequences from CSV and set index
+        self.accelerator.print(f"Loading sequences from {csv_path}...")
+        self.dataframe = pd.read_csv(csv_path, sep=separator).set_index(id_column)
+        
+        # Load and combine label DataFrames from HDF5
+        self.accelerator.print(f"Loading labels from {h5_path}...")
+        label_dfs = []
+        try:
+            with h5py.File(h5_path, 'r') as f:
+                # Find keys that correspond to pandas DataFrames (which are HDF5 groups)
+                # A common pattern is having 'axis1' inside the group.
+                df_keys = [key for key in f.keys() if isinstance(f[key], h5py.Group) and 'axis1' in f[key]]
+
+            if not df_keys:
+                raise ValueError(f"Could not find any pandas DataFrame objects in H5 file: {h5_path}")
+
+            self.accelerator.print(f"Found label DataFrames in H5 keys: {df_keys}")
+
+            for key in df_keys:
+                df = pd.read_hdf(h5_path, key=key)
+                label_dfs.append(df)
+        
+        except Exception as e:
+            self.accelerator.print(f"Error reading HDF5 file: {e}")
+            raise
+
+        # Concatenate all label dataframes
+        combined_labels_df = pd.concat(label_dfs, axis=1)
+
+        # Align labels with the sequence dataframe
+        # This ensures that we have the same entries in the same order
+        self.accelerator.print("Aligning sequences and labels...")
+        self.dataframe, self.aligned_labels = self.dataframe.align(combined_labels_df, join='inner', axis=0)
+        
+        # Fill any potential missing values in labels with 0
+        self.aligned_labels.fillna(0, inplace=True)
+
+        # Convert to torch tensor for performance
+        self.labels_tensor = torch.tensor(self.aligned_labels.values, dtype=torch.float)
+        self.num_classes = self.labels_tensor.shape[1]
+
+        # Reset index to allow for integer-based indexing in __getitem__
+        self.dataframe.reset_index(inplace=True)
+
+        self.accelerator.print(f"Initialized H5MultilabelClassificationDataset with {len(self.dataframe)} aligned samples and {self.num_classes} classes.")
+
+    def __len__(self):
+        return len(self.dataframe)
+
+    def __getitem__(self, idx):
+        # Data is pre-loaded and aligned, so just retrieve by index
+        row = self.dataframe.iloc[idx]
+        sequence = row[self.sequence_column]
+        labels = self.labels_tensor[idx]
+
+        return {"sequence": str(sequence), "labels": labels}
+
+
+class MultilabelDataCollator:
+    """
+    Data collator for multilabel classification.
+    Tokenizes sequences and pads them, and stacks labels.
+    """
+    def __init__(self, tokenizer, max_length):
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+
+    def __call__(self, examples):
+        sequences = [example["sequence"] for example in examples]
+        labels = [example["labels"] for example in examples]
+
+        batch = self.tokenizer(
+            sequences,
+            truncation=True,
+            padding=True,
+            max_length=self.max_length,
+            return_tensors="pt"
+        )
+        
+        batch["labels"] = torch.stack(labels)
+        
+        return batch
+
+
 class ProteinSequenceDataCollator:
     """
     Data collator for protein sequences that handles tokenization of raw strings.
@@ -322,9 +417,15 @@ def run_training(config_paths: list[str]):
         num_classes = len(label_encoder)
         config.model.vocab_size = tokenizer.vocab_size
         config.model.num_classes = num_classes
-        # For classification, the model output should be num_classes, not vocab_size
-        config.model.vocab_size = num_classes  # Override vocab_size for classification
         data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
+    elif task_type == "multilabel_classification":
+        tokenized_datasets, tokenizer, num_classes = preprocess(config, accelerator)
+        config.model.vocab_size = tokenizer.vocab_size
+        config.model.num_classes = num_classes
+        data_collator = MultilabelDataCollator(
+            tokenizer=tokenizer,
+            max_length=config.model.context_length
+        )
     else: # Language Modeling
         tokenized_datasets, tokenizer = preprocess(config, accelerator)
         fill_token = config.tokenizer.fill_token
@@ -333,6 +434,8 @@ def run_training(config_paths: list[str]):
         fill_token_id = tokenizer.convert_tokens_to_ids(fill_token)
         vocab_size = tokenizer.vocab_size
         config.model.vocab_size = vocab_size
+        if hasattr(config.model, 'num_classes'):
+            config.model.num_classes = None
         
         if model_type == "bert":
             data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=True, mlm_probability=0.15)
@@ -488,6 +591,21 @@ def run_training(config_paths: list[str]):
                     # We want: [batch_size, num_classes]
                     outputs = outputs[:, -1, :]  # Take last token output
                     loss = torch.nn.functional.cross_entropy(outputs, labels)
+                    accelerator.backward(loss)
+                    optimizer.step()
+                    lr_scheduler.step()
+                    optimizer.zero_grad()
+                    running_loss.append(loss.item())
+                    average_loss = sum(running_loss) / len(running_loss)
+
+            elif task_type == "multilabel_classification":
+                inputs = batch['input_ids'].to(accelerator.device)
+                labels = batch['labels'].to(accelerator.device)
+                with accelerator.accumulate(model):
+                    outputs = model(inputs)
+                    # Pool the outputs across the sequence length dimension (mean pooling)
+                    pooled_outputs = torch.mean(outputs, dim=1)
+                    loss = torch.nn.functional.binary_cross_entropy_with_logits(pooled_outputs, labels)
                     accelerator.backward(loss)
                     optimizer.step()
                     lr_scheduler.step()
@@ -732,8 +850,66 @@ def preprocess(config, accelerator=None, ask_for_overwrite=False):
 
     if task_type == "classification":
         return preprocess_for_classification(config, accelerator, ask_for_overwrite)
+    elif task_type == "multilabel_classification":
+        return preprocess_for_multilabel_classification(config, accelerator, ask_for_overwrite)
     else:
         return preprocess_for_lm(config, accelerator, ask_for_overwrite)
+
+
+def preprocess_for_multilabel_classification(config, accelerator, ask_for_overwrite):
+    """Preprocess data for a multilabel classification task."""
+    model_name = config.training.model_name
+    preprocessed_path = f"./preprocessed/{model_name}"
+    tokenizer_path = f"./preprocessed/{model_name}/tokenizer"
+
+    # For multilabel classification, we don't pre-tokenize and save the entire dataset
+    # because it's handled by the H5MultilabelClassificationDataset.
+    # We just need to ensure the tokenizer is created and available.
+
+    if os.path.exists(tokenizer_path) and not ask_for_overwrite:
+        accelerator.print("Loading pre-trained tokenizer...")
+        tokenizer = PreTrainedTokenizerFast.from_pretrained(tokenizer_path)
+    else:
+        if accelerator.is_local_main_process:
+            if os.path.exists(preprocessed_path) and ask_for_overwrite:
+                overwrite = input(f"Tokenizer for {model_name} already exists. Overwrite? [y/n]: ")
+                if overwrite.lower() == "y":
+                    accelerator.print("Deleting existing preprocessed tokenizer...")
+                    if os.path.exists(tokenizer_path):
+                        shutil.rmtree(tokenizer_path)
+            
+            os.makedirs(preprocessed_path, exist_ok=True)
+
+            # For multilabel, we expect a pre-trained tokenizer from a file,
+            # often the one used during pre-training.
+            accelerator.print("Creating tokenizer for multilabel classification...")
+            tokenizer = create_tokenizer(config.tokenizer)
+            tokenizer.save_pretrained(tokenizer_path)
+    
+    accelerator.wait_for_everyone()
+    if not accelerator.is_local_main_process:
+        # Ensure other processes load the tokenizer after it's created
+        while not os.path.exists(f"{tokenizer_path}/tokenizer.json"):
+            time.sleep(1)
+        tokenizer = PreTrainedTokenizerFast.from_pretrained(tokenizer_path)
+
+    # Now, create the dataset instance.
+    accelerator.print("Creating H5 multilabel dataset...")
+    dataset = H5MultilabelClassificationDataset(
+        csv_path=config.dataset.path,
+        h5_path=config.dataset.h5_path,
+        sequence_column=config.dataset.sequence_column,
+        id_column=config.dataset.id_column,
+        accelerator=accelerator
+    )
+    
+    # The training loop expects a dictionary-like object for datasets.
+    # We'll wrap our single dataset in a simple dictionary.
+    datasets = {"train": dataset}
+    num_classes = dataset.num_classes
+
+    return datasets, tokenizer, num_classes
+
 
 
 def preprocess_for_classification(config, accelerator, ask_for_overwrite):

@@ -1,7 +1,6 @@
 training:
   model_name: "xlstm_uniprot_multilabel_from_scratch"
-  task_type: "classification"
-  multilabel: true
+  task_type: "multilabel_classification"
   batch_size: 16
   lr: 1e-4  # Can use a slightly higher LR when training from scratch
   lr_warmup_steps: 5000
@@ -32,10 +31,15 @@ model:
   context_length: 512
 
 dataset:
-  # UniProt H5 files (same as BERT)
-  train_path: "data/uniprot/melted_train_go_data.h5"
-  valid_path: "data/uniprot/melted_valid_go_data.h5"
-  test_path: "data/uniprot/melted_test_go_data.h5"
+  # Path to the CSV file containing sequences and IDs
+  path: "data/uniprot/raw_data.csv"
+  sequence_column: "Sequence"
+  id_column: "Entry"
+  
+  # Paths to the HDF5 files containing the multi-hot encoded labels
+  h5_path: "data/uniprot/melted_train_go_data.h5"
+  valid_h5_path: "data/uniprot/melted_valid_go_data.h5"
+  test_h5_path: "data/uniprot/melted_test_go_data.h5"
   
 tokenizer:
   type: "file"
