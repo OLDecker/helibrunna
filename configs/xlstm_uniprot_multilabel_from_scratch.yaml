@@ -1,0 +1,46 @@
+training:
+  model_name: "xlstm_uniprot_multilabel_from_scratch"
+  task_type: "classification"
+  multilabel: true
+  batch_size: 16
+  lr: 1e-4  # Can use a slightly higher LR when training from scratch
+  lr_warmup_steps: 5000
+  lr_decay_until_steps: 100000
+  lr_decay_factor: 0.1
+  weight_decay: 0.01
+  amp_precision: bfloat16
+  weight_precision: float32
+  enable_mixed_precision: true
+  num_epochs: 5 # May need more epochs when training from scratch
+  output_dir: "output/xlstm_uniprot_multilabel_from_scratch"
+  save_every_step: 5000
+  log_every_step: 100
+  wandb_project: "xlstm_uniprot_multilabel_from_scratch"
+  torch_compile: false
+
+model:
+  type: "xLSTMLMModel"
+  num_blocks: 12
+  embedding_dim: 768
+  mlstm_block:
+    mlstm:
+      num_heads: 12
+  slstm_block:
+    slstm:
+      num_heads: 12
+  slstm_at: [3, 6, 9]
+  context_length: 512
+
+dataset:
+  # UniProt H5 files (same as BERT)
+  train_path: "data/uniprot/melted_train_go_data.h5"
+  valid_path: "data/uniprot/melted_valid_go_data.h5"
+  test_path: "data/uniprot/melted_test_go_data.h5"
+  
+tokenizer:
+  type: "file"
+  path: "configs/protein_vocab.txt"
+  pad_token: "[PAD]"
+  unk_token: "[UNK]"
+  cls_token: "[CLS]"
+  sep_token: "[SEP]"

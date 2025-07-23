@@ -691,7 +691,7 @@ def preprocess_for_lm_h5(config, accelerator, ask_for_overwrite):
         # Load H5 datasets for language modeling
         accelerator.print(f"Loading H5 datasets for language modeling...")
         
-        def load_h5_as_dataset(h5_path, max_sequences=10000):
+        def load_h5_as_dataset(h5_path):
             """Load H5 file with raw_data_X structure and convert to HuggingFace Dataset."""
             accelerator.print(f"Loading H5 file: {h5_path}")
             
@@ -705,11 +705,7 @@ def preprocess_for_lm_h5(config, accelerator, ask_for_overwrite):
                 raw_data_keys = [key for key in f.keys() if key.startswith('raw_data_')]
                 accelerator.print(f"Found raw_data datasets: {raw_data_keys}")
                 
-                total_loaded = 0
                 for dataset_name in raw_data_keys:
-                    if total_loaded >= max_sequences:
-                        break
-                        
                     accelerator.print(f"Loading from dataset: {dataset_name}")
                     dataset = f[dataset_name]
                     
@@ -718,15 +714,9 @@ def preprocess_for_lm_h5(config, accelerator, ask_for_overwrite):
                     accelerator.print(f"Dataset {dataset_name} dtype: {dataset.dtype}")
                     
                     # Sample a few entries to understand the structure
-                    sample_size = min(max_sequences - total_loaded, len(dataset), 1000)
-                    accelerator.print(f"Sampling {sample_size} sequences from {len(dataset)} in {dataset_name}")
+                    accelerator.print(f"Loading all {len(dataset)} sequences from {dataset_name}")
                     
-                    for i in range(sample_size):
-                        if total_loaded >= max_sequences:
-                            break
-                            
-                        entry = dataset[i]
-                        
+                    for entry in dataset:
                         # Handle numpy structured array entries (protein_id, sequence)
                         if hasattr(entry, 'item') and isinstance(entry.item(), tuple):
                             # This is a numpy void object containing (protein_id, sequence)
@@ -766,8 +756,6 @@ def preprocess_for_lm_h5(config, accelerator, ask_for_overwrite):
                             if isinstance(entry, bytes):
                                 entry = entry.decode('utf-8')
                             sequences.append(str(entry))
-                        
-                        total_loaded += 1
                 
                 accelerator.print(f"Loaded {len(sequences)} sequences from {h5_path}")
                 
@@ -780,15 +768,15 @@ def preprocess_for_lm_h5(config, accelerator, ask_for_overwrite):
                 
                 return Dataset.from_dict({"text": sequences})
         
-        # Load train dataset with limited sequences for testing
+        # Load train dataset
         train_path = config.dataset.train_path
-        raw_datasets = {"train": load_h5_as_dataset(train_path, max_sequences=1000)}
+        raw_datasets = {"train": load_h5_as_dataset(train_path)}
         
         # Load validation and test if provided
         if hasattr(config.dataset, 'valid_path') and config.dataset.valid_path:
-            raw_datasets["validation"] = load_h5_as_dataset(config.dataset.valid_path, max_sequences=500)
+            raw_datasets["validation"] = load_h5_as_dataset(config.dataset.valid_path)
         if hasattr(config.dataset, 'test_path') and config.dataset.test_path:
-            raw_datasets["test"] = load_h5_as_dataset(config.dataset.test_path, max_sequences=500)
+            raw_datasets["test"] = load_h5_as_dataset(config.dataset.test_path)
         
         # Create tokenizer
         tokenizer = create_tokenizer(config.tokenizer)
