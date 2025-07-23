@@ -18,6 +18,7 @@ import datetime
 import os
 import matplotlib.pyplot as plt
 import torch
+import numpy as np
 from accelerate import Accelerator
 from dacite import from_dict
 from datasets import load_dataset, load_from_disk, concatenate_datasets, Dataset
@@ -36,7 +37,7 @@ from tokenizers import Tokenizer
 from tokenizers.models import WordLevel, BPE
 from tokenizers.pre_tokenizers import WhitespaceSplit
 from tokenizers.trainers import WordLevelTrainer, BpeTrainer
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset as TorchDataset
 from transformers import DataCollatorForLanguageModeling, DataCollatorWithPadding
 from transformers import PreTrainedTokenizerFast
 from source.utilities import display_logo, human_readable_number, load_configs, validate_config, is_torch_compile_ready, model_from_config, save_model
@@ -63,6 +64,171 @@ from experiments.lr_scheduler import LinearWarmupCosineAnnealing
 # 
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
+
+class H5SequenceDataset(TorchDataset):
+    """
+    A PyTorch Dataset for reading sequences from an HDF5 file with a specific structure.
+
+    The HDF5 file is expected to contain multiple datasets named 'raw_data_X',
+    where X is an integer. Each of these datasets contains tuples of
+    (protein_id, sequence).
+
+    This class reads data in a streaming fashion and is memory-efficient.
+    It returns raw strings that will be tokenized by the data collator.
+    """
+    def __init__(self, h5_path: str, accelerator):
+        self.h5_path = h5_path
+        self.accelerator = accelerator
+        self.dataset_keys = []
+        self.cumulative_lengths = []
+        self.total_length = 0
+
+        try:
+            with h5py.File(self.h5_path, 'r') as f:
+                # Get all dataset keys and sort them numerically
+                keys = [key for key in f.keys() if key.startswith('raw_data_')]
+                keys.sort(key=lambda x: int(x.split('_')[-1]))
+                self.dataset_keys = keys
+
+                # Calculate cumulative lengths for efficient indexing
+                lengths = [len(f[key]) for key in self.dataset_keys]
+                self.cumulative_lengths = np.cumsum(lengths)
+                self.total_length = self.cumulative_lengths[-1] if self.cumulative_lengths.size > 0 else 0
+
+            self.accelerator.print(f"Initialized H5SequenceDataset from {h5_path}. Found {len(self.dataset_keys)} data chunks with a total of {self.total_length} sequences.")
+
+        except Exception as e:
+            self.accelerator.print(f"Error initializing H5SequenceDataset: {e}")
+            raise
+
+    def __len__(self):
+        return self.total_length
+
+    def __getitem__(self, idx):
+        if idx >= self.total_length:
+            raise IndexError("Index out of range")
+
+        # Find which dataset the index falls into
+        dataset_index = np.searchsorted(self.cumulative_lengths, idx, side='right')
+        
+        # Calculate the local index within that dataset
+        if dataset_index == 0:
+            local_index = idx
+        else:
+            local_index = idx - self.cumulative_lengths[dataset_index - 1]
+
+        with h5py.File(self.h5_path, 'r') as f:
+            dataset = f[self.dataset_keys[dataset_index]]
+            entry = dataset[local_index]
+
+            # Handle the (protein_id, sequence) tuple format
+            if hasattr(entry, 'item') and isinstance(entry.item(), tuple):
+                _, sequence = entry.item()
+            elif isinstance(entry, (tuple, list)) and len(entry) >= 2:
+                _, sequence = entry[0], entry[1]
+            else:
+                # Fallback for simple string/byte entries
+                sequence = entry
+
+            # Decode bytes to string if necessary
+            if isinstance(sequence, bytes):
+                sequence = sequence.decode('utf-8')
+
+            # Return raw string - tokenization will be handled by the data collator
+            return str(sequence)
+
+
+class ProteinSequenceDataCollator:
+    """
+    Data collator for protein sequences that handles tokenization of raw strings.
+    Similar to DataCollatorForLanguageModeling but for protein sequences.
+    """
+    def __init__(self, tokenizer, max_length, mlm=False, mlm_probability=0.15):
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+        self.mlm = mlm
+        self.mlm_probability = mlm_probability
+
+    def __call__(self, examples):
+        # Handle different input formats
+        if isinstance(examples[0], str):
+            # Direct string inputs from H5SequenceDataset
+            sequences = examples
+        elif isinstance(examples[0], dict):
+            if "text" in examples[0]:
+                # Dict with "text" field
+                sequences = [example["text"] for example in examples]
+            elif "input_ids" in examples[0]:
+                # Already tokenized - this shouldn't happen with our H5 datasets
+                # But if it does, we need to handle it gracefully
+                # This is likely from a cached HuggingFace dataset
+                return self._handle_pretokenized_batch(examples)
+            else:
+                # Unknown dict format - convert to strings
+                sequences = [str(example) for example in examples]
+        else:
+            # Unknown format - convert to strings
+            sequences = [str(example) for example in examples]
+
+        # Tokenize the batch
+        batch = self.tokenizer(
+            sequences,
+            truncation=True,
+            padding=True,
+            max_length=self.max_length,
+            return_tensors="pt"
+        )
+
+        # For causal LM, shift the inputs to create labels
+        if not self.mlm:
+            # Causal language modeling
+            input_ids = batch["input_ids"]
+            labels = input_ids.clone()
+            
+            # Shift labels: labels[i] = input_ids[i+1]
+            # The last token gets a special "fill" token or is ignored
+            labels = torch.roll(labels, -1, dims=1)
+            # Set the last position to ignore index or a special fill token
+            if hasattr(self.tokenizer, 'pad_token_id') and self.tokenizer.pad_token_id is not None:
+                labels[:, -1] = -100  # Ignore the last position
+            
+            batch["labels"] = labels
+
+        return batch
+    
+    def _handle_pretokenized_batch(self, examples):
+        """Handle pre-tokenized examples from cached HuggingFace datasets."""
+        # Extract input_ids from the examples
+        input_ids_list = [example["input_ids"] for example in examples]
+        
+        # Find the maximum length and pad
+        max_len = max(len(ids) for ids in input_ids_list)
+        max_len = min(max_len, self.max_length)  # Respect max_length
+        
+        padded_input_ids = []
+        for ids in input_ids_list:
+            # Truncate if necessary
+            if len(ids) > max_len:
+                ids = ids[:max_len]
+            # Pad if necessary
+            while len(ids) < max_len:
+                ids.append(self.tokenizer.pad_token_id)
+            padded_input_ids.append(ids)
+        
+        # Convert to tensor
+        batch = {
+            "input_ids": torch.tensor(padded_input_ids, dtype=torch.long)
+        }
+        
+        # For causal LM, create labels by shifting
+        if not self.mlm:
+            input_ids = batch["input_ids"]
+            labels = input_ids.clone()
+            labels = torch.roll(labels, -1, dims=1)
+            labels[:, -1] = -100  # Ignore the last position
+            batch["labels"] = labels
+        
+        return batch
 
 
 def main(*config_paths, preprocess=False):
@@ -171,7 +337,12 @@ def run_training(config_paths: list[str]):
         if model_type == "bert":
             data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=True, mlm_probability=0.15)
         else:
-            data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=False)
+            # Use our custom data collator for protein sequences
+            data_collator = ProteinSequenceDataCollator(
+                tokenizer=tokenizer,
+                max_length=config.model.context_length,
+                mlm=False
+            )
 
     # Create the model.
     accelerator.print("Creating model...")
@@ -691,117 +862,47 @@ def preprocess_for_lm_h5(config, accelerator, ask_for_overwrite):
         # Load H5 datasets for language modeling
         accelerator.print(f"Loading H5 datasets for language modeling...")
         
-        def load_h5_as_dataset(h5_path):
-            """Load H5 file with raw_data_X structure and convert to HuggingFace Dataset."""
-            accelerator.print(f"Loading H5 file: {h5_path}")
-            
-            # Read H5 file - original structure with raw_data_X datasets
-            sequences = []
-            with h5py.File(h5_path, 'r') as f:
-                # Print H5 structure for debugging
-                accelerator.print(f"H5 file keys: {list(f.keys())}")
-                
-                # Original UniParc format has datasets named raw_data_X
-                raw_data_keys = [key for key in f.keys() if key.startswith('raw_data_')]
-                accelerator.print(f"Found raw_data datasets: {raw_data_keys}")
-                
-                for dataset_name in raw_data_keys:
-                    accelerator.print(f"Loading from dataset: {dataset_name}")
-                    dataset = f[dataset_name]
-                    
-                    # Check the structure of this dataset
-                    accelerator.print(f"Dataset {dataset_name} shape: {dataset.shape}")
-                    accelerator.print(f"Dataset {dataset_name} dtype: {dataset.dtype}")
-                    
-                    # Sample a few entries to understand the structure
-                    accelerator.print(f"Loading all {len(dataset)} sequences from {dataset_name}")
-                    
-                    for entry in dataset:
-                        # Handle numpy structured array entries (protein_id, sequence)
-                        if hasattr(entry, 'item') and isinstance(entry.item(), tuple):
-                            # This is a numpy void object containing (protein_id, sequence)
-                            protein_id, sequence = entry.item()
-                            
-                            # Decode bytes to string if necessary
-                            if isinstance(sequence, bytes):
-                                sequence = sequence.decode('utf-8')
-                            if isinstance(protein_id, bytes):
-                                protein_id = protein_id.decode('utf-8')
-                                
-                            sequences.append(sequence)
-                            
-                        elif isinstance(entry, (tuple, list)) and len(entry) >= 2:
-                            # Format: (protein_id, sequence) or similar
-                            protein_id, sequence = entry[0], entry[1]
-                            
-                            # Decode bytes to string if necessary
-                            if isinstance(sequence, bytes):
-                                sequence = sequence.decode('utf-8')
-                            if isinstance(protein_id, bytes):
-                                protein_id = protein_id.decode('utf-8')
-                                
-                            sequences.append(sequence)
-                            
-                        elif hasattr(entry, 'shape'):
-                            # Pre-tokenized sequence as array
-                            if len(entry.shape) == 1:
-                                # 1D array of token IDs - convert back to space-separated string
-                                sequences.append(' '.join(map(str, entry)))
-                            else:
-                                accelerator.print(f"Unexpected entry shape: {entry.shape}")
-                                continue
-                                
-                        else:
-                            # Try to treat as string sequence directly
-                            if isinstance(entry, bytes):
-                                entry = entry.decode('utf-8')
-                            sequences.append(str(entry))
-                
-                accelerator.print(f"Loaded {len(sequences)} sequences from {h5_path}")
-                
-                if not sequences:
-                    raise ValueError(f"Could not find sequence data in H5 file: {h5_path}")
-                
-                # Show a sample for debugging
-                if sequences:
-                    accelerator.print(f"Sample sequence: {sequences[0][:100]}...")
-                
-                return Dataset.from_dict({"text": sequences})
-        
-        # Load train dataset
-        train_path = config.dataset.train_path
-        raw_datasets = {"train": load_h5_as_dataset(train_path)}
-        
-        # Load validation and test if provided
-        if hasattr(config.dataset, 'valid_path') and config.dataset.valid_path:
-            raw_datasets["validation"] = load_h5_as_dataset(config.dataset.valid_path)
-        if hasattr(config.dataset, 'test_path') and config.dataset.test_path:
-            raw_datasets["test"] = load_h5_as_dataset(config.dataset.test_path)
-        
-        # Create tokenizer
+        # Create tokenizer first
         tokenizer = create_tokenizer(config.tokenizer)
         tokenizer.save_pretrained(tokenizer_path)
 
-        # Tokenize datasets
-        def tokenize_function(examples):
-            return tokenizer(examples["text"], truncation=True, padding=False, max_length=config.model.context_length)
-
-        accelerator.print("Tokenizing datasets...")
+        # Create datasets that return raw strings (tokenization handled by data collator)
         tokenized_datasets = {}
-        for split_name, dataset in raw_datasets.items():
-            accelerator.print(f"Tokenizing {split_name} split...")
-            tokenized_datasets[split_name] = dataset.map(
-                tokenize_function,
-                batched=True,
-                remove_columns=dataset.column_names,
-                num_proc=1 if len(dataset) < 1000 else min(4, multiprocessing.cpu_count())
+        
+        accelerator.print("Creating H5 datasets...")
+        tokenized_datasets["train"] = H5SequenceDataset(
+            config.dataset.train_path, 
+            accelerator
+        )
+
+        if hasattr(config.dataset, 'valid_path') and config.dataset.valid_path:
+            tokenized_datasets["validation"] = H5SequenceDataset(
+                config.dataset.valid_path, 
+                accelerator
+            )
+        if hasattr(config.dataset, 'test_path') and config.dataset.test_path:
+            tokenized_datasets["test"] = H5SequenceDataset(
+                config.dataset.test_path, 
+                accelerator
             )
         
-        # Convert to datasets object
-        from datasets import DatasetDict
-        tokenized_datasets = DatasetDict(tokenized_datasets)
-        
-        # Save tokenized datasets
+        # For compatibility with the main training loop, we need to simulate
+        # the HuggingFace dataset structure. We'll create a simple wrapper.
+        class DatasetWrapper:
+            def __init__(self, datasets_dict):
+                self.datasets = datasets_dict
+            
+            def __getitem__(self, key):
+                return self.datasets[key]
+            
+            def save_to_disk(self, path):
+                # We don't actually save the datasets since they're streaming from H5
+                # Just create the directory and save a marker file
+                os.makedirs(path, exist_ok=True)
+                with open(os.path.join(path, "h5_datasets.marker"), "w") as f:
+                    f.write("H5 streaming datasets - no serialization needed")
+
+        tokenized_datasets = DatasetWrapper(tokenized_datasets)
         tokenized_datasets.save_to_disk(tokenized_data_path)
         
         # Save checksum
@@ -812,7 +913,39 @@ def preprocess_for_lm_h5(config, accelerator, ask_for_overwrite):
     
     # Load for all processes
     tokenizer = PreTrainedTokenizerFast.from_pretrained(tokenizer_path)
-    tokenized_datasets = load_from_disk(tokenized_data_path)
+    
+    # Check if we have H5 streaming datasets or regular HF datasets
+    if os.path.exists(os.path.join(tokenized_data_path, "h5_datasets.marker")):
+        # Recreate the H5 streaming datasets
+        tokenized_datasets = {}
+        tokenized_datasets["train"] = H5SequenceDataset(
+            config.dataset.train_path, 
+            accelerator
+        )
+        
+        if hasattr(config.dataset, 'valid_path') and config.dataset.valid_path:
+            tokenized_datasets["validation"] = H5SequenceDataset(
+                config.dataset.valid_path, 
+                accelerator
+            )
+        if hasattr(config.dataset, 'test_path') and config.dataset.test_path:
+            tokenized_datasets["test"] = H5SequenceDataset(
+                config.dataset.test_path, 
+                accelerator
+            )
+            
+        # Wrap in our simple dataset wrapper for compatibility
+        class DatasetWrapper:
+            def __init__(self, datasets_dict):
+                self.datasets = datasets_dict
+            
+            def __getitem__(self, key):
+                return self.datasets[key]
+        
+        tokenized_datasets = DatasetWrapper(tokenized_datasets)
+    else:
+        # Load regular HuggingFace datasets
+        tokenized_datasets = load_from_disk(tokenized_data_path)
 
     return tokenized_datasets, tokenizer
 

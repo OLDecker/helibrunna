@@ -32,9 +32,9 @@ model:
 
 dataset:
   # UniParc H5 files for language modeling
-  train_path: "/gpfs/bwfor/work/ws/hd_il278-protein_go_term_prediction/protein_go_term_prediction/data/data/uniparc/uniparc_train_sorted.h5"
-  valid_path: "/gpfs/bwfor/work/ws/hd_il278-protein_go_term_prediction/protein_go_term_prediction/data/data/uniparc/uniparc_valid_sorted.h5"
-  test_path: "/gpfs/bwfor/work/ws/hd_il278-protein_go_term_prediction/protein_go_term_prediction/data/data/uniparc/uniparc_test_sorted.h5"
+  train_path: "/gpfs/bwfor/work/ws/hd_il278-helibrunna/helibrunna/data/uniparc/uniparc_train_sorted.h5"
+  valid_path: "/gpfs/bwfor/work/ws/hd_il278-helibrunna/helibrunna/data/uniparc/uniparc_valid_sorted.h5"
+  test_path: "/gpfs/bwfor/work/ws/hd_il278-helibrunna/helibrunna/data/uniparc/uniparc_test_sorted.h5"
   
 tokenizer:
   type: "file"

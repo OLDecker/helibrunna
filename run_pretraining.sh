@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --partition=gpu-single
-#SBATCH --time=48:00:00
+#SBATCH --time=01:00:00
 #SBATCH --mem=64G
 #SBATCH --gres=gpu:A100:1
 #SBATCH --job-name=xlstm_pretrain
