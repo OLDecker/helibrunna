@@ -1,0 +1,39 @@
+9417760/home/hd/hd_hd/hd_il278/.conda/envs/xlstm/lib/python3.11/site-packages/pandas/core/computation/expressions.py:21: UserWarning: Pandas requires version '2.8.4' or newer of 'numexpr' (version '2.8.3' currently installed).
+  from pandas.core.computation.check import NUMEXPR_INSTALLED
+Detected kernel version 4.18.0, which is below the recommended minimum of 5.5.0; this can cause the process to hang. It is recommended to upgrade the kernel to the minimum version or higher.
+No CUDA runtime is found, using CUDA_HOME='/home/hd/hd_hd/hd_il278/.conda/envs/xlstm'
+wandb: Currently logged in as: ole-decker-od (ole-decker-od-heidelberg-university). Use `wandb login --relogin` to force relogin
+wandb: wandb version 0.21.0 is available!  To upgrade, please run:
+wandb:  $ pip install wandb --upgrade
+wandb: Tracking run with wandb version 0.17.6
+wandb: Run data is saved locally in /gpfs/bwfor/work/ws/hd_il278-helibrunna/helibrunna/wandb/run-20250723_183936-46dwt46k
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run run_20250723-1838-xlstm_uniprot_multilabel_from_scratch
+wandb: ⭐️ View project at https://wandb.ai/ole-decker-od-heidelberg-university/xlstm_uniprot_multilabel_from_scratch
+wandb: 🚀 View run at https://wandb.ai/ole-decker-od-heidelberg-university/xlstm_uniprot_multilabel_from_scratch/runs/46dwt46k
+
+Training:   0%|[32m          [0m| 0/156997 [00:00<?, ?step/s]
+Training:   0%|[32m          [0m| 0/156997 [03:15<?, ?step/s, loss=0.53, lr=1e-5, epoch=0.00796]
+Training:   0%|[32m          [0m| 250/156997 [03:15<34:04:43,  1.28step/s, loss=0.53, lr=1e-5, epoch=0.00796]
+Training:   0%|[32m          [0m| 250/156997 [06:30<34:04:43,  1.28step/s, loss=0.197, lr=2e-5, epoch=0.0159]
+Training:   0%|[32m          [0m| 500/156997 [06:30<33:57:49,  1.28step/s, loss=0.197, lr=2e-5, epoch=0.0159]
+Training:   0%|[32m          [0m| 500/156997 [09:45<33:57:49,  1.28step/s, loss=0.091, lr=2e-5, epoch=0.0239]
+Training:   0%|[32m          [0m| 750/156997 [09:45<33:52:24,  1.28step/s, loss=0.091, lr=2e-5, epoch=0.0239]
+Training:   0%|[32m          [0m| 750/156997 [12:56<33:52:24,  1.28step/s, loss=0.0702, lr=2e-5, epoch=0.0318]
+Training:   1%|[32m          [0m| 1000/156997 [12:56<33:32:56,  1.29step/s, loss=0.0702, lr=2e-5, epoch=0.0318]
+Training:   1%|[32m          [0m| 1000/156997 [16:08<33:32:56,  1.29step/s, loss=0.0647, lr=2e-5, epoch=0.0398]
+Training:   1%|[32m          [0m| 1250/156997 [16:08<33:23:10,  1.30step/s, loss=0.0647, lr=2e-5, epoch=0.0398]
+Training:   1%|[32m          [0m| 1250/156997 [19:13<33:23:10,  1.30step/s, loss=0.0615, lr=2e-5, epoch=0.0478]
+Training:   1%|[32m          [0m| 1500/156997 [19:13<32:51:44,  1.31step/s, loss=0.0615, lr=2e-5, epoch=0.0478]
+Training:   1%|[32m          [0m| 1500/156997 [22:17<32:51:44,  1.31step/s, loss=0.0607, lr=2e-5, epoch=0.0557]
+Training:   1%|[32m          [0m| 1750/156997 [22:17<32:27:03,  1.33step/s, loss=0.0607, lr=2e-5, epoch=0.0557]
+Training:   1%|[32m          [0m| 1750/156997 [25:21<32:27:03,  1.33step/s, loss=0.06, lr=2e-5, epoch=0.0637]  
+Training:   1%|[32m▏         [0m| 2000/156997 [25:21<32:11:29,  1.34step/s, loss=0.06, lr=2e-5, epoch=0.0637]
+Training:   1%|[32m▏         [0m| 2000/156997 [28:25<32:11:29,  1.34step/s, loss=0.0597, lr=2e-5, epoch=0.0717]
+Training:   1%|[32m▏         [0m| 2250/156997 [28:25<31:59:27,  1.34step/s, loss=0.0597, lr=2e-5, epoch=0.0717]
+Training:   1%|[32m▏         [0m| 2250/156997 [31:30<31:59:27,  1.34step/s, loss=0.0589, lr=2e-5, epoch=0.0796]
+Training:   2%|[32m▏         [0m| 2500/156997 [31:30<31:51:29,  1.35step/s, loss=0.0589, lr=2e-5, epoch=0.0796]
+Training:   2%|[32m▏         [0m| 2500/156997 [34:34<31:51:29,  1.35step/s, loss=0.0579, lr=2e-5, epoch=0.0876]
+Training:   2%|[32m▏         [0m| 2750/156997 [34:34<31:44:33,  1.35step/s, loss=0.0579, lr=2e-5, epoch=0.0876]
+Training:   2%|[32m▏         [0m| 2750/156997 [37:38<31:44:33,  1.35step/s, loss=0.0592, lr=2e-5, epoch=0.0955]
+Training:   2%|[32m▏         [0m| 3000/156997 [37:38<31:36:53,  1.35step/s, loss=0.0592, lr=2e-5, epoch=0.0955]Training:   2%|[32m▏         [0m| 3000/156997 [40:41<31:36:53,  1.35step/s, loss=0.0587, lr=2e-5, epoch=0.104] Training:   2%|[32m▏         [0m| 3250/156997 [40:41<31:29:03,  1.36step/s, loss=0.0587, lr=2e-5, epoch=0.104]slurmstepd: error: *** JOB 9417760 ON m07n04 CANCELLED AT 2025-07-23T19:20:33 ***

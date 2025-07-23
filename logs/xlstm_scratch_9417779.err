@@ -1,0 +1,14 @@
+/home/hd/hd_hd/hd_il278/.conda/envs/xlstm/lib/python3.11/site-packages/pandas/core/computation/expressions.py:21: UserWarning: Pandas requires version '2.8.4' or newer of 'numexpr' (version '2.8.3' currently installed).
+  from pandas.core.computation.check import NUMEXPR_INSTALLED
+Detected kernel version 4.18.0, which is below the recommended minimum of 5.5.0; this can cause the process to hang. It is recommended to upgrade the kernel to the minimum version or higher.
+No CUDA runtime is found, using CUDA_HOME='/home/hd/hd_hd/hd_il278/.conda/envs/xlstm'
+wandb: Currently logged in as: ole-decker-od (ole-decker-od-heidelberg-university). Use `wandb login --relogin` to force relogin
+wandb: wandb version 0.21.0 is available!  To upgrade, please run:
+wandb:  $ pip install wandb --upgrade
+wandb: Tracking run with wandb version 0.17.6
+wandb: Run data is saved locally in /gpfs/bwfor/work/ws/hd_il278-helibrunna/helibrunna/wandb/run-20250723_191657-0ue904ez
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run run_20250723-1916-xlstm_uniprot_multilabel_from_scratch
+wandb: ⭐️ View project at https://wandb.ai/ole-decker-od-heidelberg-university/xlstm_uniprot_multilabel_from_scratch
+wandb: 🚀 View run at https://wandb.ai/ole-decker-od-heidelberg-university/xlstm_uniprot_multilabel_from_scratch/runs/0ue904ez
+Training:   0%|[32m          [0m| 0/156997 [00:00<?, ?step/s]Training:   0%|[32m          [0m| 0/156997 [03:18<?, ?step/s, loss=0.521, lr=1e-5, epoch=0.00796]Training:   0%|[32m          [0m| 250/156997 [03:18<34:37:45,  1.26step/s, loss=0.521, lr=1e-5, epoch=0.00796]slurmstepd: error: *** JOB 9417779 ON p03n05 CANCELLED AT 2025-07-23T19:20:54 ***

@@ -2,8 +2,8 @@ training:
   model_name: "xlstm_uniprot_multilabel_from_scratch"
   task_type: "multilabel_classification"
   batch_size: 16
-  lr: 1e-4  # Can use a slightly higher LR when training from scratch
-  lr_warmup_steps: 5000
+  lr: 2e-5
+  lr_warmup_steps: 500
   lr_decay_until_steps: 100000
   lr_decay_factor: 0.1
   weight_decay: 0.01
@@ -13,7 +13,7 @@ training:
   num_epochs: 5 # May need more epochs when training from scratch
   output_dir: "output/xlstm_uniprot_multilabel_from_scratch"
   save_every_step: 5000
-  log_every_step: 100
+  log_every_step: 250
   wandb_project: "xlstm_uniprot_multilabel_from_scratch"
   torch_compile: false
 

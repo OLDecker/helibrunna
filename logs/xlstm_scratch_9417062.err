@@ -1,0 +1,8 @@
+/var/spool/slurm/job9417062/slurm_script: line 13: /etc/profile.d/conda.sh: No such file or directory
+Run 'mamba init' to be able to run mamba activate/deactivate
+and start a new shell session. Or use conda to activate/deactivate.
+
+Traceback (most recent call last):
+  File "/gpfs/bwfor/work/ws/hd_il278-helibrunna/helibrunna/train.py", line 20, in <module>
+    import torch
+ModuleNotFoundError: No module named 'torch'

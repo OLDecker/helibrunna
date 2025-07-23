@@ -190,6 +190,19 @@ class H5MultilabelClassificationDataset(TorchDataset):
         self.labels_tensor = torch.tensor(self.aligned_labels.values, dtype=torch.float)
         self.num_classes = self.labels_tensor.shape[1]
 
+        # Calculate pos_weight for handling class imbalance
+        self.accelerator.print("Calculating pos_weight for class imbalance...")
+        num_samples = len(self.labels_tensor)
+        num_positives = torch.sum(self.labels_tensor, dim=0)
+        num_negatives = num_samples - num_positives
+        
+        # Avoid division by zero for classes with no positive samples
+        # A weight of 1.0 is neutral in this case.
+        self.pos_weight = torch.ones_like(num_positives)
+        has_positives = num_positives > 0
+        self.pos_weight[has_positives] = num_negatives[has_positives] / num_positives[has_positives]
+        self.accelerator.print(f"Calculated pos_weight for {self.num_classes} classes.")
+
         # Reset index to allow for integer-based indexing in __getitem__
         self.dataframe.reset_index(inplace=True)
 
@@ -592,6 +605,15 @@ def run_training(config_paths: list[str]):
 
     # Do the training.
     model.train()
+
+    # Get pos_weight for multilabel classification if available
+    pos_weight = None
+    if task_type == "multilabel_classification":
+        train_dataset = tokenized_datasets["train"]
+        if hasattr(train_dataset, 'pos_weight'):
+            accelerator.print("Using pos_weight for loss calculation.")
+            pos_weight = train_dataset.pos_weight.to(accelerator.device)
+
     for epoch in range(num_epochs):
         for batch in train_dataloader:
 
@@ -620,7 +642,11 @@ def run_training(config_paths: list[str]):
                     outputs = model(inputs)
                     # Pool the outputs across the sequence length dimension (mean pooling)
                     pooled_outputs = torch.mean(outputs, dim=1)
-                    loss = torch.nn.functional.binary_cross_entropy_with_logits(pooled_outputs, labels)
+                    loss = torch.nn.functional.binary_cross_entropy_with_logits(
+                        pooled_outputs, 
+                        labels,
+                        pos_weight=pos_weight
+                    )
                     accelerator.backward(loss)
                     optimizer.step()
                     lr_scheduler.step()
