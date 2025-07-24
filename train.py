@@ -494,10 +494,10 @@ def run_training(config_paths: list[str]):
     #model = model.to(device=accelerator.device)
     #model.reset_parameters()
 
-    # Apply precision.
-    training_dtype = get_torch_dtype(config.training.weight_precision)
-    model = model.to(dtype=training_dtype)
-    accelerator.print(f"Training dtype: {training_dtype}")
+    # Apply precision. Let the accelerator handle it.
+    # training_dtype = get_torch_dtype(config.training.weight_precision)
+    # model = model.to(dtype=training_dtype)
+    # accelerator.print(f"Training dtype: {training_dtype}")
 
     # Attempt torch compile.
     if config.training.get("torch_compile", True):
@@ -562,13 +562,28 @@ def run_training(config_paths: list[str]):
         eps=1e-8,            # Same as BERT default
     )
     
-    # Use HuggingFace linear scheduler for better BERT compatibility
+    # Use different schedulers based on config
     total_steps = config.training.lr_decay_until_steps if config.training.lr_decay_until_steps != "auto" else num_steps
-    lr_scheduler = get_linear_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=config.training.lr_warmup_steps,
-        num_training_steps=total_steps
-    )
+    
+    # Check if cosine scheduler is requested
+    scheduler_type = config.training.get("lr_scheduler_type", "linear")
+    
+    if scheduler_type == "cosine":
+        accelerator.print("Using cosine annealing scheduler")
+        lr_scheduler = LinearWarmupCosineAnnealing(
+            optimizer,
+            warmup_steps=config.training.lr_warmup_steps,
+            decay_until_step=total_steps,
+            max_lr=config.training.lr,
+            min_lr=config.training.lr * config.training.lr_decay_factor
+        )
+    else:
+        accelerator.print("Using linear scheduler with warmup")
+        lr_scheduler = get_linear_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=config.training.lr_warmup_steps,
+            num_training_steps=total_steps
+        )
 
     # Prepare model, optimizer, and dataloader for accelerator.
     if eval_dataloader is not None:
@@ -721,6 +736,36 @@ def run_training(config_paths: list[str]):
             
             if batch_idx % 100 == 0:
                 accelerator.print(f"Processing batch {batch_idx}")
+                
+                # Add detailed debugging every 1000 batches
+                if batch_idx % 1000 == 0 and batch_idx > 0:
+                    accelerator.print("=== DEBUGGING INFO ===")
+                    accelerator.print(f"Current step: {step}")
+                    accelerator.print(f"Current loss: {average_loss:.6f}")
+                    accelerator.print(f"Learning rate: {lr_scheduler.get_last_lr()[0]:.8f}")
+                    
+                    # Check gradient norms
+                    total_grad_norm = 0
+                    param_count = 0
+                    for param in model.parameters():
+                        if param.grad is not None:
+                            param_norm = param.grad.data.norm(2)
+                            total_grad_norm += param_norm.item() ** 2
+                            param_count += 1
+                    total_grad_norm = total_grad_norm ** (1. / 2)
+                    accelerator.print(f"Total gradient norm: {total_grad_norm:.6f}")
+                    accelerator.print(f"Parameters with gradients: {param_count}")
+                    
+                    # Check model output statistics
+                    if task_type == "multilabel_classification":
+                        with torch.no_grad():
+                            sample_outputs = outputs[:1]  # First sample
+                            sample_pooled = pooled_outputs[:1]
+                            accelerator.print(f"Sample model output range: [{sample_outputs.min().item():.4f}, {sample_outputs.max().item():.4f}]")
+                            accelerator.print(f"Sample pooled output range: [{sample_pooled.min().item():.4f}, {sample_pooled.max().item():.4f}]")
+                            accelerator.print(f"Sample sigmoid range: [{torch.sigmoid(sample_pooled).min().item():.4f}, {torch.sigmoid(sample_pooled).max().item():.4f}]")
+                    
+                    accelerator.print("=== END DEBUG ===")
 
             if task_type == "classification":
                 # For classification, the batch already contains input_ids and labels

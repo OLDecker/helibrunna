@@ -1,0 +1,54 @@
+training:
+  model_name: "xlstm_uniprot_multilabel_optimized"
+  task_type: "multilabel_classification"
+  batch_size: 16  # Increase batch size for better gradient estimates
+  gradient_accumulation_steps: 2  # Effective batch size of 32
+  lr: 5e-5  # Lower learning rate to escape plateau
+  lr_warmup_steps: 1000  # Shorter warmup since we're continuing from good state
+  lr_decay_until_steps: 50000  # More aggressive decay schedule
+  max_steps: 50000  # Focus on quality over quantity
+  lr_decay_factor: 0.1
+  weight_decay: 0.02  # Increase regularization
+  mixed_precision: "bf16"
+  weight_precision: float32
+  enable_mixed_precision: true
+  num_epochs: 3  # Fewer epochs with better optimization
+  output_dir: "output/xlstm_uniprot_multilabel_optimized"
+  save_every_step: 5000
+  log_every_step: 500   # More frequent logging to catch issues
+  eval_every_step: 2500  # More frequent validation
+  wandb_project: "xlstm_uniprot_multilabel_optimized"
+  torch_compile: false
+
+model:
+  type: "xLSTMLMModel"
+  num_blocks: 12
+  embedding_dim: 768
+  mlstm_block:
+    mlstm:
+      num_heads: 12
+  slstm_block:
+    slstm:
+      num_heads: 12
+  slstm_at: [3, 6, 9]
+  context_length: 512
+
+dataset:
+  # Path to the CSV file containing sequences and IDs
+  path: "data/uniprot/raw_data.csv"
+  sequence_column: "Sequence"
+  id_column: "Entry"
+  
+  # Paths to the HDF5 files containing the multi-hot encoded labels
+  train_path: "data/uniprot/melted_train_go_data.h5"
+  valid_path: "data/uniprot/melted_valid_go_data.h5"
+  test_path: "data/uniprot/melted_test_go_data.h5"
+  
+tokenizer:
+  type: "file"
+  path: "configs/protein_vocab.txt"
+  pad_token: "[PAD]"
+  unk_token: "[UNK]"
+  cls_token: "[CLS]"
+  sep_token: "[SEP]"
+  mask_token: "[MASK]"
