@@ -3,13 +3,13 @@ training:
   task_type: "multilabel_classification"
   batch_size: 4  # Same as BERT per_device_train_batch_size
   gradient_accumulation_steps: 2  # Same as BERT
-  lr: 5e-5  # Standard BERT fine-tuning LR instead of 1e-4
+  lr: 1e-5  # MUCH lower LR to prevent NaN - was 5e-5
   lr_warmup_steps: 500  # Same as BERT
   lr_decay_until_steps: 200000  # Same as BERT max_steps
   max_steps: 200000  # Same as BERT max_steps
   lr_decay_factor: 0.1
   weight_decay: 0.01  # Same as BERT
-  mixed_precision: "fp16"  # Same as BERT use_amp=True
+  mixed_precision: "bf16"  # Switch to bf16 instead of fp16 for stability
   weight_precision: float32
   enable_mixed_precision: true
   num_epochs: 5 # May need more epochs when training from scratch

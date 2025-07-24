@@ -677,6 +677,11 @@ def run_training(config_paths: list[str]):
                         pos_weight=pos_weight
                     )
                     accelerator.backward(loss)
+                    
+                    # Add gradient clipping to prevent NaN values
+                    if accelerator.sync_gradients:
+                        accelerator.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    
                     optimizer.step()
                     lr_scheduler.step()
                     optimizer.zero_grad()
