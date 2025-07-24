@@ -1,0 +1,14 @@
+/home/hd/hd_hd/hd_il278/.conda/envs/xlstm/lib/python3.11/site-packages/pandas/core/computation/expressions.py:21: UserWarning: Pandas requires version '2.8.4' or newer of 'numexpr' (version '2.8.3' currently installed).
+  from pandas.core.computation.check import NUMEXPR_INSTALLED
+Detected kernel version 4.18.0, which is below the recommended minimum of 5.5.0; this can cause the process to hang. It is recommended to upgrade the kernel to the minimum version or higher.
+No CUDA runtime is found, using CUDA_HOME='/home/hd/hd_hd/hd_il278/.conda/envs/xlstm'
+wandb: Currently logged in as: ole-decker-od (ole-decker-od-heidelberg-university). Use `wandb login --relogin` to force relogin
+wandb: wandb version 0.21.0 is available!  To upgrade, please run:
+wandb:  $ pip install wandb --upgrade
+wandb: Tracking run with wandb version 0.17.6
+wandb: Run data is saved locally in /gpfs/bwfor/work/ws/hd_il278-helibrunna/helibrunna/wandb/run-20250723_194424-g870rfy0
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run run_20250723-1944-xlstm_uniprot_multilabel_from_scratch
+wandb: ⭐️ View project at https://wandb.ai/ole-decker-od-heidelberg-university/xlstm_uniprot_multilabel_from_scratch
+wandb: 🚀 View run at https://wandb.ai/ole-decker-od-heidelberg-university/xlstm_uniprot_multilabel_from_scratch/runs/g870rfy0
+Training:   0%|[32m          [0m| 0/156997 [00:00<?, ?step/s]Training:   0%|[32m          [0m| 0/156997 [03:17<?, ?step/s, loss=1.41, lr=5e-5, epoch=0.00796]Training:   0%|[32m          [0m| 250/156997 [03:17<34:24:27,  1.27step/s, loss=1.41, lr=5e-5, epoch=0.00796]Training:   0%|[32m          [0m| 250/156997 [06:35<34:24:27,  1.27step/s, loss=1.42, lr=0.0001, epoch=0.0159]Training:   0%|[32m          [0m| 500/156997 [06:35<34:22:38,  1.26step/s, loss=1.42, lr=0.0001, epoch=0.0159]Training:   0%|[32m          [0m| 500/156997 [09:54<34:22:38,  1.26step/s, loss=1.41, lr=0.0001, epoch=0.0239]Training:   0%|[32m          [0m| 750/156997 [09:54<34:24:49,  1.26step/s, loss=1.41, lr=0.0001, epoch=0.0239]Training:   0%|[32m          [0m| 750/156997 [13:12<34:24:49,  1.26step/s, loss=1.38, lr=0.0001, epoch=0.0318]Training:   1%|[32m          [0m| 1000/156997 [13:12<34:23:28,  1.26step/s, loss=1.38, lr=0.0001, epoch=0.0318]Training:   1%|[32m          [0m| 1000/156997 [16:31<34:23:28,  1.26step/s, loss=1.41, lr=0.0001, epoch=0.0398]Training:   1%|[32m          [0m| 1250/156997 [16:31<34:20:24,  1.26step/s, loss=1.41, lr=0.0001, epoch=0.0398]Training:   1%|[32m          [0m| 1250/156997 [19:50<34:20:24,  1.26step/s, loss=1.37, lr=0.0001, epoch=0.0478]Training:   1%|[32m          [0m| 1500/156997 [19:50<34:18:19,  1.26step/s, loss=1.37, lr=0.0001, epoch=0.0478]slurmstepd: error: *** JOB 9417786 ON p03n05 CANCELLED AT 2025-07-23T20:04:26 DUE TO TIME LIMIT ***

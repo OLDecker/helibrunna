@@ -40,6 +40,8 @@ from tokenizers.trainers import WordLevelTrainer, BpeTrainer
 from torch.utils.data import DataLoader, Dataset as TorchDataset
 from transformers import DataCollatorForLanguageModeling, DataCollatorWithPadding
 from transformers import PreTrainedTokenizerFast
+from transformers import get_linear_schedule_with_warmup
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support, roc_auc_score
 from source.utilities import display_logo, human_readable_number, load_configs, validate_config, is_torch_compile_ready, model_from_config, save_model
 
 # Try to import h5py for H5 file support
@@ -534,13 +536,16 @@ def run_training(config_paths: list[str]):
             {"weight_decay": 0.0, "params": optimizer_groups[1]},
         ),
         lr=config.training.lr,
+        betas=(0.9, 0.999),  # Same as BERT default
+        eps=1e-8,            # Same as BERT default
     )
-    lr_scheduler = LinearWarmupCosineAnnealing(
+    
+    # Use HuggingFace linear scheduler for better BERT compatibility
+    total_steps = config.training.lr_decay_until_steps if config.training.lr_decay_until_steps != "auto" else num_steps
+    lr_scheduler = get_linear_schedule_with_warmup(
         optimizer,
-        config.training.lr_warmup_steps,
-        config.training.lr_decay_until_steps,
-        config.training.lr,
-        config.training.lr_decay_factor * config.training.lr,
+        num_warmup_steps=config.training.lr_warmup_steps,
+        num_training_steps=total_steps
     )
 
     # Prepare model, optimizer, and dataloader for accelerator.
@@ -587,6 +592,9 @@ def run_training(config_paths: list[str]):
     # Training loop.
     step = 0
     running_loss = []
+    # For multilabel metrics collection
+    running_predictions = []
+    running_labels = []
     history = {
         "loss": [],
         "lr": [],
@@ -614,6 +622,9 @@ def run_training(config_paths: list[str]):
             accelerator.print("Using pos_weight for loss calculation.")
             pos_weight = train_dataset.pos_weight.to(accelerator.device)
 
+    # Get max_steps for early stopping (like BERT)
+    max_steps = config.training.get("max_steps", None)
+    
     for epoch in range(num_epochs):
         for batch in train_dataloader:
 
@@ -653,6 +664,11 @@ def run_training(config_paths: list[str]):
                     optimizer.zero_grad()
                     running_loss.append(loss.item())
                     average_loss = sum(running_loss) / len(running_loss)
+                    
+                    # Collect predictions and labels for metrics (only from main process)
+                    if accelerator.is_local_main_process:
+                        running_predictions.append(pooled_outputs.detach())
+                        running_labels.append(labels.detach())
 
             else: # Language Modeling
                 inputs = batch['input_ids'].to(accelerator.device)
@@ -690,6 +706,12 @@ def run_training(config_paths: list[str]):
             # Next step.
             step += 1
 
+            # Check if we've reached max_steps (like BERT training)
+            max_steps = config.training.get("max_steps", None)
+            if max_steps is not None and step >= max_steps:
+                accelerator.print(f"Reached max_steps={max_steps}. Stopping training.")
+                break
+
             # Compute epoch with fraction.
             epoch_fraction = num_epochs * step / num_steps
 
@@ -708,14 +730,39 @@ def run_training(config_paths: list[str]):
                 history["lr"].append(last_lr)
                 history["step"].append(step)
                 history["epoch"].append(epoch_fraction)
+                
+                # Prepare log data
+                log_data = {"loss": average_loss, "lr": last_lr, "epoch": epoch_fraction}
+                
+                # Compute multilabel metrics if we have collected predictions
+                if task_type == "multilabel_classification" and len(running_predictions) > 0:
+                    # Concatenate all collected predictions and labels
+                    all_predictions = torch.cat(running_predictions, dim=0)
+                    all_labels = torch.cat(running_labels, dim=0)
+                    
+                    # Compute metrics
+                    metrics = compute_multilabel_metrics(all_predictions, all_labels)
+                    
+                    # Add metrics to log data
+                    for metric_name, metric_value in metrics.items():
+                        log_data[f"train_{metric_name}"] = metric_value
+                    
+                    # Clear collected predictions and labels
+                    running_predictions = []
+                    running_labels = []
+                
                 running_loss = []
 
                 # Log to wandb.
                 if wandb_project is not None:
-                    accelerator.log({"loss": average_loss, "lr": last_lr, "epoch": epoch_fraction}, step=step)
+                    accelerator.log(log_data, step=step)
                 # Update the progressbar. Use the step as the total. Also display the loss and lr.
                 progress_bar.set_postfix({"loss": average_loss, "lr": last_lr, "epoch": epoch_fraction})
                 progress_bar.update(log_every_step)
+        
+        # Break outer epoch loop if max_steps reached
+        if max_steps is not None and step >= max_steps:
+            break
 
     # End training.
     progress_bar.close()
@@ -782,6 +829,52 @@ def get_torch_dtype(dtype: str) -> torch.dtype:
         return torch.float16
     else:
         raise ValueError(f"Unknown dtype: {dtype}")
+
+
+def compute_multilabel_metrics(predictions, labels):
+    """
+    Compute multilabel classification metrics.
+    
+    Args:
+        predictions (torch.Tensor): Raw logits from the model [batch_size, num_classes]
+        labels (torch.Tensor): Ground truth binary labels [batch_size, num_classes]
+    
+    Returns:
+        dict: Dictionary containing computed metrics
+    """
+    # Convert to numpy arrays
+    preds_np = predictions.detach().cpu().numpy()
+    labels_np = labels.detach().cpu().numpy()
+    
+    # Apply sigmoid to get probabilities for ROC-AUC
+    preds_prob = torch.sigmoid(predictions).detach().cpu().numpy()
+    
+    # Apply threshold of 0.5 for binary classification metrics
+    preds_binary = (preds_prob > 0.5).astype(int)
+    
+    # Compute metrics
+    try:
+        # ROC-AUC using probabilities
+        roc_auc = roc_auc_score(labels_np, preds_prob, average="samples")
+    except Exception:
+        # In case of issues (e.g., all labels are 0 for some samples)
+        roc_auc = 0.0
+    
+    # Precision, Recall, F1 using binary predictions
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        labels_np, preds_binary, average='samples', zero_division=0
+    )
+    
+    # Accuracy using binary predictions
+    accuracy = accuracy_score(labels_np, preds_binary)
+    
+    return {
+        'accuracy': float(accuracy),
+        'f1': float(f1),
+        'precision': float(precision),
+        'recall': float(recall),
+        'roc_auc': float(roc_auc)
+    }
     
 
 def create_readme(output_dir, config):
