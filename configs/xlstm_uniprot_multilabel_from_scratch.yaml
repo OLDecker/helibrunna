@@ -18,7 +18,7 @@ training:
   log_every_step: 1000   # Same as BERT logging_steps
   eval_every_step: 5000  # Same as BERT eval_steps
   wandb_project: "xlstm_uniprot_multilabel_from_scratch"
-  torch_compile: false
+  torch_compile: false  # DISABLED for faster startup
 
 model:
   type: "xLSTMLMModel"

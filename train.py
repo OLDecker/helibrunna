@@ -53,7 +53,7 @@ except ImportError:
     HAS_H5PY = False
 
 import torch
-torch.autograd.set_detect_anomaly(True)
+# torch.autograd.set_detect_anomaly(True)  # DISABLED for performance
 
 # Import the LinearWarmupCosineAnnealing scheduler from the experiments module.
 # Source: https://github.com/NX-AI/xlstm/tree/main
@@ -629,7 +629,13 @@ def run_training(config_paths: list[str]):
             pos_weight = train_dataset.pos_weight.to(accelerator.device)
     
     for epoch in range(num_epochs):
-        for batch in train_dataloader:
+        accelerator.print(f"Starting epoch {epoch+1}/{num_epochs}")
+        for batch_idx, batch in enumerate(train_dataloader):
+            if batch_idx == 0:
+                accelerator.print("Processing first batch...")
+            
+            if batch_idx % 100 == 0:
+                accelerator.print(f"Processing batch {batch_idx}")
 
             if task_type == "classification":
                 # For classification, the batch already contains input_ids and labels
@@ -650,15 +656,26 @@ def run_training(config_paths: list[str]):
                     average_loss = sum(running_loss) / len(running_loss)
 
             elif task_type == "multilabel_classification":
+                if batch_idx == 0:
+                    accelerator.print("Setting up multilabel classification batch...")
+                
                 inputs = batch['input_ids'].to(accelerator.device)
                 labels = batch['labels'].to(accelerator.device)
                 attention_mask = batch.get('attention_mask', None)
                 if attention_mask is not None:
                     attention_mask = attention_mask.to(accelerator.device)
                 
+                if batch_idx == 0:
+                    accelerator.print(f"Input shape: {inputs.shape}, Labels shape: {labels.shape}")
+                    accelerator.print("Starting forward pass...")
+                
                 with accelerator.accumulate(model):
                     # xLSTM doesn't support attention_mask parameter, only inputs
                     outputs = model(inputs)
+                    
+                    if batch_idx == 0:
+                        accelerator.print(f"Model output shape: {outputs.shape}")
+                        accelerator.print("Computing pooled outputs...")
                     
                     # Pool the outputs across the sequence length dimension
                     if attention_mask is not None:
