@@ -226,6 +226,7 @@ class MultilabelDataCollator:
     """
     Data collator for multilabel classification.
     Tokenizes sequences and pads them, and stacks labels.
+    BERT-compatible tokenization with special tokens.
     """
     def __init__(self, tokenizer, max_length):
         self.tokenizer = tokenizer
@@ -235,11 +236,15 @@ class MultilabelDataCollator:
         sequences = [example["sequence"] for example in examples]
         labels = [example["labels"] for example in examples]
 
-        batch = self.tokenizer(
+        # Use BERT-style batch encoding for consistency
+        batch = self.tokenizer.batch_encode_plus(
             sequences,
-            truncation=True,
-            padding=True,
             max_length=self.max_length,
+            padding=True,
+            truncation=True,
+            add_special_tokens=True,  # Add [CLS] and [SEP] like BERT
+            return_attention_mask=True,  # For better sequence handling
+            return_token_type_ids=False,  # Not needed for single sequences
             return_tensors="pt"
         )
         
@@ -647,10 +652,25 @@ def run_training(config_paths: list[str]):
             elif task_type == "multilabel_classification":
                 inputs = batch['input_ids'].to(accelerator.device)
                 labels = batch['labels'].to(accelerator.device)
+                attention_mask = batch.get('attention_mask', None)
+                if attention_mask is not None:
+                    attention_mask = attention_mask.to(accelerator.device)
+                
                 with accelerator.accumulate(model):
+                    # xLSTM doesn't support attention_mask parameter, only inputs
                     outputs = model(inputs)
-                    # Pool the outputs across the sequence length dimension (mean pooling)
-                    pooled_outputs = torch.mean(outputs, dim=1)
+                    
+                    # Pool the outputs across the sequence length dimension
+                    if attention_mask is not None:
+                        # Use attention mask for pooling (ignore padded tokens)
+                        mask_expanded = attention_mask.unsqueeze(-1).float()
+                        # Avoid division by zero: use at least 1 for the denominator
+                        valid_lengths = mask_expanded.sum(dim=1).clamp(min=1)
+                        pooled_outputs = (outputs * mask_expanded).sum(dim=1) / valid_lengths
+                    else:
+                        # Simple mean pooling without attention mask
+                        pooled_outputs = torch.mean(outputs, dim=1)
+                    
                     loss = torch.nn.functional.binary_cross_entropy_with_logits(
                         pooled_outputs, 
                         labels,
@@ -1490,7 +1510,7 @@ def train_tokenizer(tokenizer_config, raw_datasets):
 
 
 def create_tokenizer(tokenizer_config):
-    """Create tokenizer based on config."""
+    """Create tokenizer based on config with BERT-compatible special token handling."""
     if tokenizer_config.type == "file":
         # Load vocabulary from file
         vocab_path = tokenizer_config.path
@@ -1500,23 +1520,27 @@ def create_tokenizer(tokenizer_config):
         vocab_map = {token: i for i, token in enumerate(vocab)}
         tokenizer = Tokenizer(WordLevel(vocab=vocab_map, unk_token=tokenizer_config.unk_token))
         
-        # Convert to fast tokenizer
+        # Convert to fast tokenizer with BERT-compatible settings
         with tempfile.TemporaryDirectory() as tempdir:
             tokenizer_path = os.path.join(tempdir, "tokenizer.json")
             tokenizer.save(tokenizer_path)
-            fast_tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_path)
+            fast_tokenizer = PreTrainedTokenizerFast(
+                tokenizer_file=tokenizer_path,
+                clean_up_tokenization_spaces=False,
+                model_max_length=512
+            )
             
-            # Add special tokens
-            special_tokens = {}
+            # Set special tokens (don't add them as they're already in vocab)
             if hasattr(tokenizer_config, 'pad_token'):
-                special_tokens['pad_token'] = tokenizer_config.pad_token
+                fast_tokenizer.pad_token = tokenizer_config.pad_token
             if hasattr(tokenizer_config, 'unk_token'):
-                special_tokens['unk_token'] = tokenizer_config.unk_token
+                fast_tokenizer.unk_token = tokenizer_config.unk_token
             if hasattr(tokenizer_config, 'mask_token'):
-                special_tokens['mask_token'] = tokenizer_config.mask_token
-            
-            if special_tokens:
-                fast_tokenizer.add_special_tokens(special_tokens)
+                fast_tokenizer.mask_token = tokenizer_config.mask_token
+            if hasattr(tokenizer_config, 'cls_token'):
+                fast_tokenizer.cls_token = tokenizer_config.cls_token
+            if hasattr(tokenizer_config, 'sep_token'):
+                fast_tokenizer.sep_token = tokenizer_config.sep_token
         
         return fast_tokenizer
     

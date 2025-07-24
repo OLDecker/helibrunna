@@ -51,3 +51,4 @@ tokenizer:
   unk_token: "[UNK]"
   cls_token: "[CLS]"
   sep_token: "[SEP]"
+  mask_token: "[MASK]"
