@@ -1,10 +1,10 @@
 training:
   model_name: "xlstm_uniprot_multilabel_from_scratch"
   task_type: "multilabel_classification"
-  batch_size: 4  # Same as BERT per_device_train_batch_size
-  gradient_accumulation_steps: 2  # Same as BERT
-  lr: 1e-5  # MUCH lower LR to prevent NaN - was 5e-5
-  lr_warmup_steps: 500  # Same as BERT
+  batch_size: 8  # Increase batch size for better gradient estimates
+  gradient_accumulation_steps: 1  # Reduce accumulation to get more frequent updates
+  lr: 1e-4  # Much higher learning rate for training from scratch
+  lr_warmup_steps: 2000  # Longer warmup for stability with higher learning rate
   lr_decay_until_steps: 200000  # Same as BERT max_steps
   max_steps: 200000  # Same as BERT max_steps
   lr_decay_factor: 0.1
@@ -40,9 +40,9 @@ dataset:
   id_column: "Entry"
   
   # Paths to the HDF5 files containing the multi-hot encoded labels
-  h5_path: "data/uniprot/melted_train_go_data.h5"
-  valid_h5_path: "data/uniprot/melted_valid_go_data.h5"
-  test_h5_path: "data/uniprot/melted_test_go_data.h5"
+  train_path: "data/uniprot/melted_train_go_data.h5"  # Renamed from h5_path for consistency
+  valid_path: "data/uniprot/melted_valid_go_data.h5"  # Renamed from valid_h5_path for consistency
+  test_path: "data/uniprot/melted_test_go_data.h5"    # Renamed from test_h5_path for consistency
   
 tokenizer:
   type: "file"

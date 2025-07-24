@@ -481,9 +481,15 @@ def run_training(config_paths: list[str]):
         # Create a new head for classification.
         new_head = torch.nn.Linear(hidden_size, num_classes)
         
+        # Initialize the classification head properly for multilabel classification
+        # Use Xavier initialization and initialize bias to small negative value
+        torch.nn.init.xavier_uniform_(new_head.weight)
+        torch.nn.init.constant_(new_head.bias, -2.0)  # Small negative bias for better initial performance
+        
         # Replace the old head with the new one.
         model.lm_head = new_head
         accelerator.print(f"Model head swapped. New head: {model.lm_head}")
+        accelerator.print("Classification head initialized with Xavier weights and negative bias")
 
     #model = model.to(device=accelerator.device)
     #model.reset_parameters()
@@ -515,6 +521,17 @@ def run_training(config_paths: list[str]):
         shuffle=True,
         collate_fn=data_collator
     )
+    
+    # Create validation dataloader if validation data exists
+    eval_dataloader = None
+    if "validation" in tokenized_datasets:
+        accelerator.print("Preparing validation DataLoader...")
+        eval_dataloader = DataLoader(
+            tokenized_datasets["validation"],
+            batch_size=config.training.batch_size,
+            shuffle=False,  # Don't shuffle validation data
+            collate_fn=data_collator
+        )
 
     # Estimate the number of steps.
     num_steps = config.training.num_epochs * len(tokenized_datasets["train"]) // config.training.batch_size
@@ -554,11 +571,15 @@ def run_training(config_paths: list[str]):
     )
 
     # Prepare model, optimizer, and dataloader for accelerator.
-    model, optimizer, train_dataloader = accelerator.prepare(model, optimizer, train_dataloader)
+    if eval_dataloader is not None:
+        model, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(model, optimizer, train_dataloader, eval_dataloader)
+    else:
+        model, optimizer, train_dataloader = accelerator.prepare(model, optimizer, train_dataloader)
 
     # Get some parameters.
     save_every_step = config.training.save_every_step
     log_every_step = config.training.log_every_step
+    eval_every_step = config.training.get("eval_every_step", 0)  # Add eval_every_step
     num_epochs = config.training.num_epochs
     enable_mixed_precision = config.training.enable_mixed_precision
     wandb_project = config.training.get("wandb_project", None)
@@ -616,6 +637,70 @@ def run_training(config_paths: list[str]):
     if tokenizer.pad_token is not None:
         ignore_index = tokenizer.pad_token_id
     accelerator.print(f"Ignore index: {ignore_index}")
+
+    # Define validation evaluation function for multilabel classification
+    def evaluate_validation():
+        if eval_dataloader is None or task_type != "multilabel_classification":
+            return {}
+        
+        accelerator.print("Running validation evaluation...")
+        model.eval()
+        
+        all_predictions = []
+        all_labels = []
+        total_loss = 0.0
+        num_batches = 0
+        
+        with torch.no_grad():
+            for batch_idx, batch in enumerate(eval_dataloader):
+                # Limit validation to first 100 batches for faster evaluation
+                if batch_idx >= 100:
+                    break
+                    
+                inputs = batch["input_ids"]
+                attention_mask = batch.get("attention_mask", None)
+                labels = batch["labels"]
+                
+                # Forward pass
+                outputs = model(inputs)
+                
+                # Pool the outputs (same as training)
+                if attention_mask is not None:
+                    last_token_indices = attention_mask.sum(dim=1) - 1
+                    batch_indices = torch.arange(outputs.size(0), device=outputs.device)
+                    pooled_outputs = outputs[batch_indices, last_token_indices]
+                else:
+                    pooled_outputs = outputs[:, -1, :]
+                
+                # Compute loss
+                loss = torch.nn.functional.binary_cross_entropy_with_logits(
+                    pooled_outputs, 
+                    labels,
+                    pos_weight=pos_weight
+                )
+                
+                total_loss += loss.item()
+                num_batches += 1
+                
+                # Collect predictions and labels
+                all_predictions.append(pooled_outputs.detach())
+                all_labels.append(labels.detach())
+        
+        model.train()  # Switch back to training mode
+        
+        if len(all_predictions) > 0:
+            # Concatenate all predictions and labels
+            all_predictions = torch.cat(all_predictions, dim=0)
+            all_labels = torch.cat(all_labels, dim=0)
+            
+            # Compute metrics
+            metrics = compute_multilabel_metrics(all_predictions, all_labels)
+            metrics["val_loss"] = total_loss / num_batches if num_batches > 0 else 0.0
+            
+            accelerator.print(f"Validation metrics: {metrics}")
+            return metrics
+        
+        return {"val_loss": total_loss / num_batches if num_batches > 0 else 0.0}
 
     # Do the training.
     model.train()
@@ -678,15 +763,16 @@ def run_training(config_paths: list[str]):
                         accelerator.print("Computing pooled outputs...")
                     
                     # Pool the outputs across the sequence length dimension
+                    # For xLSTM, use the LAST non-padded token instead of mean pooling
+                    # This is more appropriate for sequence classification with autoregressive models
                     if attention_mask is not None:
-                        # Use attention mask for pooling (ignore padded tokens)
-                        mask_expanded = attention_mask.unsqueeze(-1).float()
-                        # Avoid division by zero: use at least 1 for the denominator
-                        valid_lengths = mask_expanded.sum(dim=1).clamp(min=1)
-                        pooled_outputs = (outputs * mask_expanded).sum(dim=1) / valid_lengths
+                        # Find the last non-padded position for each sequence
+                        last_token_indices = attention_mask.sum(dim=1) - 1  # Get index of last non-padded token
+                        batch_indices = torch.arange(outputs.size(0), device=outputs.device)
+                        pooled_outputs = outputs[batch_indices, last_token_indices]
                     else:
-                        # Simple mean pooling without attention mask
-                        pooled_outputs = torch.mean(outputs, dim=1)
+                        # If no attention mask, use the last token
+                        pooled_outputs = outputs[:, -1, :]
                     
                     loss = torch.nn.functional.binary_cross_entropy_with_logits(
                         pooled_outputs, 
@@ -798,6 +884,13 @@ def run_training(config_paths: list[str]):
                 # Update the progressbar. Use the step as the total. Also display the loss and lr.
                 progress_bar.set_postfix({"loss": average_loss, "lr": last_lr, "epoch": epoch_fraction})
                 progress_bar.update(log_every_step)
+            
+            # Evaluate on validation set every eval_every_step
+            if step % eval_every_step == 0 and step > 0 and eval_every_step > 0 and accelerator.is_local_main_process:
+                val_metrics = evaluate_validation()
+                if val_metrics and wandb_project is not None:
+                    # Log validation metrics to wandb
+                    accelerator.log(val_metrics, step=step)
         
         # Break outer epoch loop if max_steps reached
         if max_steps is not None and step >= max_steps:
@@ -1070,7 +1163,7 @@ def preprocess_for_multilabel_classification(config, accelerator, ask_for_overwr
     accelerator.print("Creating H5 multilabel dataset...")
     dataset = H5MultilabelClassificationDataset(
         csv_path=config.dataset.path,
-        h5_path=config.dataset.h5_path,
+        h5_path=config.dataset.train_path,  # Updated to use train_path
         sequence_column=config.dataset.sequence_column,
         id_column=config.dataset.id_column,
         accelerator=accelerator
