@@ -556,7 +556,8 @@ def run_training(config_paths: list[str]):
     log_every_step = config.training.log_every_step
     num_epochs = config.training.num_epochs
     enable_mixed_precision = config.training.enable_mixed_precision
-    wandb_project = config.training.get("wandb_project", None)  
+    wandb_project = config.training.get("wandb_project", None)
+    max_steps = config.training.get("max_steps", None)  # Get max_steps before deleting config  
 
     # Get a subset of the config that includes only the model.
     model_config = OmegaConf.select(config, "model")
@@ -621,9 +622,6 @@ def run_training(config_paths: list[str]):
         if hasattr(train_dataset, 'pos_weight'):
             accelerator.print("Using pos_weight for loss calculation.")
             pos_weight = train_dataset.pos_weight.to(accelerator.device)
-
-    # Get max_steps for early stopping (like BERT)
-    max_steps = config.training.get("max_steps", None)
     
     for epoch in range(num_epochs):
         for batch in train_dataloader:
@@ -707,7 +705,6 @@ def run_training(config_paths: list[str]):
             step += 1
 
             # Check if we've reached max_steps (like BERT training)
-            max_steps = config.training.get("max_steps", None)
             if max_steps is not None and step >= max_steps:
                 accelerator.print(f"Reached max_steps={max_steps}. Stopping training.")
                 break
