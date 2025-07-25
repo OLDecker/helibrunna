@@ -71,7 +71,7 @@ class H5SequenceDataset(TorchDataset):
     """
     A PyTorch Dataset for reading sequences from an HDF5 file with a specific structure.
 
-    The HDF5 file is expected to contain multiple datasets named 'raw_data_X',
+    The HDF5 file is expected to contain multiple datasets named 'raw_data_',
     where X is an integer. Each of these datasets contains tuples of
     (protein_id, sequence).
 
@@ -160,7 +160,7 @@ class H5MultilabelClassificationDataset(TorchDataset):
         label_dfs = []
         try:
             with h5py.File(h5_path, 'r') as f:
-                # Find keys that correspond to pandas DataFrames (which are HDF5 groups)
+                # Find keys that correspond to pandas DataFrame objects (which are HDF5 groups)
                 # A common pattern is having 'axis1' inside the group.
                 df_keys = [key for key in f.keys() if isinstance(f[key], h5py.Group) and 'axis1' in f[key]]
 
@@ -728,44 +728,117 @@ def run_training(config_paths: list[str]):
             accelerator.print("Using pos_weight for loss calculation.")
             pos_weight = train_dataset.pos_weight.to(accelerator.device)
     
+    # Initial model state debugging
+    accelerator.print("=== INITIAL MODEL STATE DEBUG ===")
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    accelerator.print(f"Total parameters: {total_params:,}")
+    accelerator.print(f"Trainable parameters: {trainable_params:,}")
+    
+    # Check initial parameter values
+    param_stats = {}
+    for name, param in model.named_parameters():
+        if 'lm_head' in name or 'embedding' in name or 'blocks.0' in name:
+            param_stats[name] = {
+                'shape': list(param.shape),
+                'norm': param.data.norm(2).item(),
+                'mean': param.data.mean().item(),
+                'std': param.data.std().item(),
+                'requires_grad': param.requires_grad
+            }
+    
+    accelerator.print("Initial parameter statistics for key layers:")
+    for layer_name, stats in param_stats.items():
+        accelerator.print(f"  {layer_name}: shape={stats['shape']}, norm={stats['norm']:.4f}, mean={stats['mean']:.4f}, std={stats['std']:.4f}, grad={stats['requires_grad']}")
+    
+    # Test forward pass with dummy data
+    accelerator.print("Testing initial forward pass...")
+    try:
+        with torch.no_grad():
+            # Create dummy input
+            dummy_input = torch.randint(0, tokenizer.vocab_size, (2, 128), device=accelerator.device)
+            dummy_output = model(dummy_input)
+            accelerator.print(f"Dummy forward pass successful - Input: {dummy_input.shape}, Output: {dummy_output.shape}")
+            accelerator.print(f"Dummy output range: [{dummy_output.min().item():.4f}, {dummy_output.max().item():.4f}]")
+            accelerator.print(f"Dummy output mean: {dummy_output.mean().item():.4f}, std: {dummy_output.std().item():.4f}")
+    except Exception as e:
+        accelerator.print(f"ERROR in initial forward pass: {e}")
+    
+    accelerator.print("=== END INITIAL MODEL STATE DEBUG ===")
+    
+    # Store initial parameter values for comparison
+    initial_params = {}
+    for name, param in model.named_parameters():
+        if 'lm_head' in name or 'embedding' in name or 'blocks.0' in name:
+            initial_params[name] = param.data.clone()
+    accelerator.print(f"Stored initial parameters for {len(initial_params)} key layers")
+    
     for epoch in range(num_epochs):
         accelerator.print(f"Starting epoch {epoch+1}/{num_epochs}")
         for batch_idx, batch in enumerate(train_dataloader):
             if batch_idx == 0:
-                accelerator.print("Processing first batch...")
+                accelerator.print("=== FIRST BATCH DETAILED DEBUG ===")
+                accelerator.print(f"Batch keys: {list(batch.keys())}")
+                for key, value in batch.items():
+                    if torch.is_tensor(value):
+                        accelerator.print(f"  {key}: shape={value.shape}, dtype={value.dtype}, device={value.device}")
+                        if key == 'input_ids':
+                            accelerator.print(f"    Sample input_ids (first 20): {value[0][:20].tolist()}")
+                            accelerator.print(f"    Vocab range check - min: {value.min().item()}, max: {value.max().item()}")
+                        elif key == 'labels':
+                            accelerator.print(f"    Labels sum per sample (first 3): {value[:3].sum(dim=1).tolist()}")
+                            accelerator.print(f"    Total positive labels in batch: {value.sum().item()}")
+                accelerator.print("=== END FIRST BATCH DEBUG ===")
             
             if batch_idx % 100 == 0:
                 accelerator.print(f"Processing batch {batch_idx}")
                 
-                # Add detailed debugging every 1000 batches
-                if batch_idx % 1000 == 0 and batch_idx > 0:
-                    accelerator.print("=== DEBUGGING INFO ===")
-                    accelerator.print(f"Current step: {step}")
+                # Add detailed debugging every 200 batches - MOVED to BEFORE zero_grad()
+                if batch_idx % 200 == 0 and batch_idx > 0:
+                    accelerator.print("=== COMPREHENSIVE DEBUGGING INFO ===")
+                    accelerator.print(f"Epoch: {epoch+1}/{num_epochs}, Batch: {batch_idx}, Step: {step}")
                     accelerator.print(f"Current loss: {average_loss:.6f}")
                     accelerator.print(f"Learning rate: {lr_scheduler.get_last_lr()[0]:.8f}")
                     
-                    # Check gradient norms
-                    total_grad_norm = 0
-                    param_count = 0
-                    for param in model.parameters():
-                        if param.grad is not None:
-                            param_norm = param.grad.data.norm(2)
-                            total_grad_norm += param_norm.item() ** 2
-                            param_count += 1
-                    total_grad_norm = total_grad_norm ** (1. / 2)
-                    accelerator.print(f"Total gradient norm: {total_grad_norm:.6f}")
-                    accelerator.print(f"Parameters with gradients: {param_count}")
+                    # Check model parameters (weights) statistics
+                    weight_info = {}
+                    for name, param in model.named_parameters():
+                        if 'lm_head' in name or 'embedding' in name or 'blocks.0' in name:
+                            weight_info[name] = {
+                                'norm': param.data.norm(2).item(),
+                                'max': param.data.abs().max().item(),
+                                'min': param.data.abs().min().item(),
+                                'mean': param.data.abs().mean().item(),
+                                'std': param.data.std().item()
+                            }
                     
-                    # Check model output statistics
-                    if task_type == "multilabel_classification":
-                        with torch.no_grad():
-                            sample_outputs = outputs[:1]  # First sample
-                            sample_pooled = pooled_outputs[:1]
-                            accelerator.print(f"Sample model output range: [{sample_outputs.min().item():.4f}, {sample_outputs.max().item():.4f}]")
-                            accelerator.print(f"Sample pooled output range: [{sample_pooled.min().item():.4f}, {sample_pooled.max().item():.4f}]")
-                            accelerator.print(f"Sample sigmoid range: [{torch.sigmoid(sample_pooled).min().item():.4f}, {torch.sigmoid(sample_pooled).max().item():.4f}]")
+                    accelerator.print("Key parameter statistics:")
+                    for layer_name, info in weight_info.items():
+                        accelerator.print(f"  {layer_name}: norm={info['norm']:.4f}, max={info['max']:.4f}, std={info['std']:.4f}")
                     
-                    accelerator.print("=== END DEBUG ===")
+                    # Check parameter changes since initialization
+                    param_changes = {}
+                    for name, current_param in model.named_parameters():
+                        if name in initial_params:
+                            param_diff = (current_param.data - initial_params[name]).norm().item()
+                            param_changes[name] = param_diff
+                    
+                    accelerator.print("Parameter changes since initialization:")
+                    for layer_name, change in param_changes.items():
+                        accelerator.print(f"  {layer_name}: change_norm={change:.6f}")
+                    
+                    # Check optimizer state
+                    accelerator.print("Optimizer state:")
+                    for group_idx, group in enumerate(optimizer.param_groups):
+                        accelerator.print(f"  Group {group_idx}: lr={group['lr']:.8f}, weight_decay={group['weight_decay']}")
+                    
+                    # Memory usage
+                    if torch.cuda.is_available():
+                        memory_allocated = torch.cuda.memory_allocated() / 1024**3  # GB
+                        memory_reserved = torch.cuda.memory_reserved() / 1024**3   # GB
+                        accelerator.print(f"GPU Memory: Allocated={memory_allocated:.2f}GB, Reserved={memory_reserved:.2f}GB")
+                    
+                    accelerator.print("=== END COMPREHENSIVE DEBUG ===")
 
             if task_type == "classification":
                 # For classification, the batch already contains input_ids and labels
@@ -787,7 +860,7 @@ def run_training(config_paths: list[str]):
 
             elif task_type == "multilabel_classification":
                 if batch_idx == 0:
-                    accelerator.print("Setting up multilabel classification batch...")
+                    accelerator.print("=== FIRST MULTILABEL BATCH PROCESSING ===")
                 
                 inputs = batch['input_ids'].to(accelerator.device)
                 labels = batch['labels'].to(accelerator.device)
@@ -796,15 +869,27 @@ def run_training(config_paths: list[str]):
                     attention_mask = attention_mask.to(accelerator.device)
                 
                 if batch_idx == 0:
+                    accelerator.print(f"Inputs moved to device: {inputs.device}")
+                    accelerator.print(f"Labels moved to device: {labels.device}")
                     accelerator.print(f"Input shape: {inputs.shape}, Labels shape: {labels.shape}")
                     accelerator.print("Starting forward pass...")
                 
                 with accelerator.accumulate(model):
+                    # Check gradients before forward pass
+                    if batch_idx == 0:
+                        grad_before = []
+                        for name, param in model.named_parameters():
+                            if param.grad is not None:
+                                grad_before.append((name, param.grad.norm().item()))
+                        accelerator.print(f"Gradients before forward pass: {len(grad_before)} parameters have gradients")
+                    
                     # xLSTM doesn't support attention_mask parameter, only inputs
                     outputs = model(inputs)
                     
                     if batch_idx == 0:
-                        accelerator.print(f"Model output shape: {outputs.shape}")
+                        accelerator.print(f"Forward pass completed - Model output shape: {outputs.shape}")
+                        accelerator.print(f"Model output range: [{outputs.min().item():.4f}, {outputs.max().item():.4f}]")
+                        accelerator.print(f"Model output mean: {outputs.mean().item():.4f}, std: {outputs.std().item():.4f}")
                         accelerator.print("Computing pooled outputs...")
                     
                     # Pool the outputs across the sequence length dimension
@@ -819,20 +904,133 @@ def run_training(config_paths: list[str]):
                         # If no attention mask, use the last token
                         pooled_outputs = outputs[:, -1, :]
                     
+                    if batch_idx == 0:
+                        accelerator.print(f"Pooled outputs shape: {pooled_outputs.shape}")
+                        accelerator.print(f"Pooled outputs range: [{pooled_outputs.min().item():.4f}, {pooled_outputs.max().item():.4f}]")
+                        accelerator.print(f"Pooled outputs mean: {pooled_outputs.mean().item():.4f}, std: {pooled_outputs.std().item():.4f}")
+                        accelerator.print("Computing loss...")
+                    
                     loss = torch.nn.functional.binary_cross_entropy_with_logits(
                         pooled_outputs, 
                         labels,
                         pos_weight=pos_weight
                     )
+                    
+                    if batch_idx == 0:
+                        accelerator.print(f"Loss computed: {loss.item():.6f}")
+                        accelerator.print("Starting backward pass...")
+                    
                     accelerator.backward(loss)
+                    
+                    if batch_idx == 0:
+                        accelerator.print("Backward pass completed")
+                        # Check gradients after backward pass
+                        grad_after = []
+                        total_grad_norm_after = 0
+                        for name, param in model.named_parameters():
+                            if param.grad is not None:
+                                grad_norm = param.grad.norm().item()
+                                grad_after.append((name, grad_norm))
+                                total_grad_norm_after += grad_norm ** 2
+                        total_grad_norm_after = total_grad_norm_after ** 0.5
+                        accelerator.print(f"Gradients after backward pass: {len(grad_after)} parameters have gradients")
+                        accelerator.print(f"Total gradient norm after backward: {total_grad_norm_after:.6f}")
+                        if len(grad_after) > 0:
+                            accelerator.print(f"Sample gradient norms: {grad_after[:3]}")
                     
                     # Add gradient clipping to prevent NaN values
                     if accelerator.sync_gradients:
+                        if batch_idx == 0:
+                            accelerator.print("Gradient synchronization is active - applying gradient clipping")
                         accelerator.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    else:
+                        if batch_idx == 0:
+                            accelerator.print("Gradient synchronization not active - skipping gradient clipping")
+                    
+                    if batch_idx == 0:
+                        accelerator.print(f"accelerator.sync_gradients: {accelerator.sync_gradients}")
+                        accelerator.print(f"Gradient accumulation steps: {accelerator.gradient_accumulation_steps}")
+                        accelerator.print(f"Current step % gradient_accumulation_steps: {step % accelerator.gradient_accumulation_steps}")
+                        accelerator.print("Running optimizer step...")
                     
                     optimizer.step()
+                    
+                    if batch_idx == 0:
+                        accelerator.print("Optimizer step completed, stepping scheduler...")
+                    
                     lr_scheduler.step()
+                    
+                    if batch_idx == 0:
+                        accelerator.print("Scheduler step completed, checking gradients before zeroing...")
+                    
+                    # CRITICAL: Check gradients BEFORE they are zeroed out
+                    if batch_idx % 200 == 0 and batch_idx > 0:
+                        accelerator.print("=== GRADIENT CHECK BEFORE ZEROING ===")
+                        total_grad_norm_before_zero = 0
+                        grad_count = 0
+                        max_grad_before_zero = 0
+                        
+                        for name, param in model.named_parameters():
+                            if param.grad is not None:
+                                grad_count += 1
+                                grad_norm = param.grad.data.norm(2).item()
+                                total_grad_norm_before_zero += grad_norm ** 2
+                                max_grad_before_zero = max(max_grad_before_zero, param.grad.data.abs().max().item())
+                                
+                                # Print key layer gradients
+                                if 'lm_head' in name or 'embedding' in name or 'blocks.0' in name:
+                                    accelerator.print(f"  PRE-ZERO {name}: grad_norm={grad_norm:.6f}")
+                        
+                        total_grad_norm_before_zero = total_grad_norm_before_zero ** 0.5
+                        accelerator.print(f"PRE-ZERO: {grad_count} params have gradients, total_norm={total_grad_norm_before_zero:.6f}, max={max_grad_before_zero:.6f}")
+                        accelerator.print("=== END GRADIENT CHECK ===")
+                    
+                    # Check model output statistics BEFORE zeroing gradients
+                    if task_type == "multilabel_classification" and batch_idx % 200 == 0 and batch_idx > 0:
+                        with torch.no_grad():
+                            sample_outputs = outputs[:3]  # First 3 samples
+                            sample_pooled = pooled_outputs[:3]
+                            sample_labels = labels[:3]
+                            
+                            accelerator.print(f"Model output shape: {outputs.shape}")
+                            accelerator.print(f"Pooled output shape: {pooled_outputs.shape}")
+                            accelerator.print(f"Labels shape: {labels.shape}")
+                            
+                            accelerator.print(f"Sample model outputs (3 samples):")
+                            accelerator.print(f"  Range: [{sample_outputs.min().item():.4f}, {sample_outputs.max().item():.4f}]")
+                            accelerator.print(f"  Mean: {sample_outputs.mean().item():.4f}")
+                            accelerator.print(f"  Std: {sample_outputs.std().item():.4f}")
+                            
+                            accelerator.print(f"Sample pooled outputs (3 samples):")
+                            accelerator.print(f"  Range: [{sample_pooled.min().item():.4f}, {sample_pooled.max().item():.4f}]")
+                            accelerator.print(f"  Mean: {sample_pooled.mean().item():.4f}")
+                            accelerator.print(f"  Std: {sample_pooled.std().item():.4f}")
+                            
+                            sigmoid_outputs = torch.sigmoid(sample_pooled)
+                            accelerator.print(f"Sample sigmoid outputs (3 samples):")
+                            accelerator.print(f"  Range: [{sigmoid_outputs.min().item():.4f}, {sigmoid_outputs.max().item():.4f}]")
+                            accelerator.print(f"  Mean: {sigmoid_outputs.mean().item():.4f}")
+                            
+                            # Check label distribution
+                            accelerator.print(f"Sample labels (3 samples):")
+                            accelerator.print(f"  Labels sum per sample: {sample_labels.sum(dim=1).tolist()}")
+                            accelerator.print(f"  Total positive labels: {sample_labels.sum().item()}")
+                            
+                            # Check loss components
+                            accelerator.print(f"Current batch loss: {loss.item():.6f}")
+                            
+                            # Check if pos_weight is being used
+                            if pos_weight is not None:
+                                accelerator.print(f"Using pos_weight - mean: {pos_weight.mean().item():.4f}, max: {pos_weight.max().item():.4f}")
+                            else:
+                                accelerator.print("Not using pos_weight")
+                    
                     optimizer.zero_grad()
+                    
+                    if batch_idx == 0:
+                        accelerator.print(f"Gradients zeroed. Loss for this batch: {loss.item():.6f}")
+                        accelerator.print("=== END FIRST MULTILABEL BATCH PROCESSING ===")
+                    
                     running_loss.append(loss.item())
                     average_loss = sum(running_loss) / len(running_loss)
                     
@@ -1669,50 +1867,71 @@ def train_tokenizer(tokenizer_config, raw_datasets):
     return tokenizer
 
 
-def create_tokenizer(tokenizer_config):
-    """Create tokenizer based on config with BERT-compatible special token handling."""
-    if tokenizer_config.type == "file":
-        # Load vocabulary from file
-        vocab_path = tokenizer_config.path
-        with open(vocab_path, 'r') as f:
-            vocab = [line.strip() for line in f if line.strip()]
-        
-        vocab_map = {token: i for i, token in enumerate(vocab)}
-        tokenizer = Tokenizer(WordLevel(vocab=vocab_map, unk_token=tokenizer_config.unk_token))
-        
-        # Convert to fast tokenizer with BERT-compatible settings
-        with tempfile.TemporaryDirectory() as tempdir:
-            tokenizer_path = os.path.join(tempdir, "tokenizer.json")
-            tokenizer.save(tokenizer_path)
-            fast_tokenizer = PreTrainedTokenizerFast(
-                tokenizer_file=tokenizer_path,
-                clean_up_tokenization_spaces=False,
-                model_max_length=512
-            )
-            
-            # Set special tokens (don't add them as they're already in vocab)
-            if hasattr(tokenizer_config, 'pad_token'):
-                fast_tokenizer.pad_token = tokenizer_config.pad_token
-            if hasattr(tokenizer_config, 'unk_token'):
-                fast_tokenizer.unk_token = tokenizer_config.unk_token
-            if hasattr(tokenizer_config, 'mask_token'):
-                fast_tokenizer.mask_token = tokenizer_config.mask_token
-            if hasattr(tokenizer_config, 'cls_token'):
-                fast_tokenizer.cls_token = tokenizer_config.cls_token
-            if hasattr(tokenizer_config, 'sep_token'):
-                fast_tokenizer.sep_token = tokenizer_config.sep_token
-        
-        return fast_tokenizer
-    
-    elif tokenizer_config.type == "char":
-        # Character-level tokenizer (for backward compatibility)
-        return train_char_tokenizer(None, None, tokenizer_config)
-    
+def create_tokenizer(tokenizer_config: OmegaConf) -> PreTrainedTokenizerFast:
+    """
+    Create a tokenizer based on the provided configuration.
+
+    Args:
+        tokenizer_config (OmegaConf): The tokenizer configuration.
+
+    Returns:
+        PreTrainedTokenizerFast: The created tokenizer.
+    """
+    if tokenizer_config.type == "wordlevel":
+        # Create a WordLevel tokenizer.
+        tokenizer = Tokenizer(WordLevel(unk_token=tokenizer_config.unk_token))
+        tokenizer.pre_tokenizer = WhitespaceSplit()
+    elif tokenizer_config.type == "bpe":
+        # Create a BPE tokenizer.
+        tokenizer = Tokenizer(BPE(unk_token=tokenizer_config.unk_token))
+        tokenizer.pre_tokenizer = WhitespaceSplit()
+    elif tokenizer_config.type == "file":
+        # Load a tokenizer from a file.
+        tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_config.path)
     else:
         raise ValueError(f"Unsupported tokenizer type: {tokenizer_config.type}")
 
+    # Set the special tokens if they are defined in the config.
+    if "special_tokens" in tokenizer_config:
+        # Make sure special_tokens is a list of strings
+        if isinstance(tokenizer_config.special_tokens, list):
+            special_tokens = tokenizer_config.special_tokens
+        else:
+            special_tokens = [str(token) for token in tokenizer_config.special_tokens]
+        
+        # Add special tokens. This should be done before training the tokenizer.
+        tokenizer.add_special_tokens(special_tokens)
 
-def train_char_tokenizer(raw_datasets, sequence_column, tokenizer_config):
+    # Set the padding token if it is defined in the config.
+    if "pad_token" in tokenizer_config:
+        tokenizer.pad_token = tokenizer_config.pad_token
+    
+    # Set the end of sequence token if it is defined in the config.
+    if "eos_token" in tokenizer_config:
+        tokenizer.eos_token = tokenizer_config.eos_token
+    
+    # For BPE, we might need to train it if it's not pre-trained
+    if tokenizer_config.type == "bpe" and tokenizer_config.get("vocab_size"):
+        # This part assumes you might train the tokenizer on some data,
+        # which is not the case here as we are loading a pre-trained model.
+        # If you were to train, you would do it here.
+        # For now, we just ensure the model is correctly instantiated.
+        pass
+
+    # Wrap the tokenizer in a PreTrainedTokenizerFast.
+    fast_tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=tokenizer,
+        pad_token=tokenizer_config.get("pad_token"),
+        unk_token=tokenizer_config.get("unk_token"),
+        cls_token=tokenizer_config.get("cls_token"),
+        sep_token=tokenizer_config.get("sep_token"),
+        mask_token=tokenizer_config.get("mask_token"),
+    )
+
+    return fast_tokenizer
+
+
+def train_char_tokenizer(dataset, sequence_column, tokenizer_config):
     """Trains a character-level tokenizer for protein sequences."""
     
     # Find all unique characters in the sequence column

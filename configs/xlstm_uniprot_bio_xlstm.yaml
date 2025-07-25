@@ -16,27 +16,30 @@ training:
   lr_decay_factor: 0.1
   weight_decay: 0.1
   gradient_accumulation_steps: 4
-  mixed_precision: "bf16"
-  torch_compile: True
+  amp_precision: bfloat16
+  weight_precision: float32
+  enable_mixed_precision: true
+  torch_compile: true
   wandb_project: "helibrunna"
   save_every_step: 5000
   log_every_step: 100
   eval_every_step: 5000
 
 model:
-  type: xlstm
+  type: xLSTMLMModel
   context_length: 1024
-  vocab_size: 30 # Will be overridden by tokenizer size
-  m_residual: True
-  s_residual: True
-  block_type: "mLSTM"
+  vocab_size: 23 # Will be overridden by tokenizer size
   num_blocks: 8
   embedding_dim: 512
-  num_heads: 8
-  head_dim: 64
-  s_state_dim: 256
-  m_state_dim: 256
-  ff_mult: 2.0 # From Bio-xLSTM paper for proteins
+  mlstm_block:
+    mlstm:
+      num_heads: 8
+      backend: "cuda"
+  slstm_block:
+    slstm:
+      num_heads: 8
+      backend: "cuda"
+  slstm_at: []  # Use only mLSTM blocks as recommended by Bio-xLSTM paper
   use_rope: True # Enable Rotary Position Embeddings for mLSTM
   use_abs_pos_emb: False
   optimizer:
@@ -46,27 +49,18 @@ model:
 
 dataset:
   type: protein_multilabel
-  path: data/uniprot/uniprot_sprot_2024_03_mini.csv
-  train_path: data/uniprot/go_term_matrix_train.h5
-  val_path: data/uniprot/go_term_matrix_val.h5
-  test_path: data/uniprot/go_term_matrix_test.h5
-  sequence_column: "sequence"
-  id_column: "id"
+  path: data/uniprot/raw_data.csv
+  train_path: data/uniprot/melted_train_go_data.h5
+  val_path: data/uniprot/melted_valid_go_data.h5
+  test_path: data/uniprot/melted_test_go_data.h5
+  sequence_column: "Sequence"
+  id_column: "Entry"
   label_columns: [] # Not needed for H5 format
   
 tokenizer:
-  type: bpe
-  vocab_size: 30000
-  add_special_tokens: True
-  special_tokens:
-    - "[PAD]"
-    - "[UNK]"
-    - "[CLS]"
-    - "[SEP]"
-    - "[MASK]"
+  type: "wordlevel"
   pad_token: "[PAD]"
   unk_token: "[UNK]"
   cls_token: "[CLS]"
   sep_token: "[SEP]"
   mask_token: "[MASK]"
-  fill_token: "[MASK]"
