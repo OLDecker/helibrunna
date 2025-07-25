@@ -966,6 +966,7 @@ def run_training(config_paths: list[str]):
                     # CRITICAL: Check gradients BEFORE they are zeroed out
                     if batch_idx % 200 == 0 and batch_idx > 0:
                         accelerator.print("=== GRADIENT CHECK BEFORE ZEROING ===")
+                        accelerator.print(f"Debugging: batch_idx={batch_idx}, step={step}, should check gradients")
                         total_grad_norm_before_zero = 0
                         grad_count = 0
                         max_grad_before_zero = 0
@@ -984,6 +985,11 @@ def run_training(config_paths: list[str]):
                         total_grad_norm_before_zero = total_grad_norm_before_zero ** 0.5
                         accelerator.print(f"PRE-ZERO: {grad_count} params have gradients, total_norm={total_grad_norm_before_zero:.6f}, max={max_grad_before_zero:.6f}")
                         accelerator.print("=== END GRADIENT CHECK ===")
+                    
+                    # Also add a simple gradient check every 100 batches for more frequent monitoring
+                    if batch_idx % 100 == 0 and batch_idx > 0:
+                        grad_count_simple = sum(1 for param in model.parameters() if param.grad is not None)
+                        accelerator.print(f"Simple gradient check at batch {batch_idx}: {grad_count_simple} params have gradients")
                     
                     # Check model output statistics BEFORE zeroing gradients
                     if task_type == "multilabel_classification" and batch_idx % 200 == 0 and batch_idx > 0:
@@ -1888,6 +1894,47 @@ def create_tokenizer(tokenizer_config: OmegaConf) -> PreTrainedTokenizerFast:
     elif tokenizer_config.type == "file":
         # Load a tokenizer from a file.
         tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_config.path)
+    elif tokenizer_config.type == "protein":
+        # Create a character-level tokenizer for protein sequences
+        # Load vocabulary from protein_vocab.txt if path specified, otherwise use default amino acids
+        if hasattr(tokenizer_config, 'path') and tokenizer_config.path:
+            # Load vocab from file
+            with open(tokenizer_config.path, 'r') as f:
+                vocab_list = [line.strip() for line in f.readlines() if line.strip()]
+        else:
+            # Default protein vocabulary
+            special_tokens = ['[PAD]', '[UNK]', '[CLS]', '[SEP]', '[MASK]']
+            amino_acids = ['A', 'R', 'N', 'D', 'B', 'C', 'E', 'Q', 'Z', 'G', 'H', 'I', 'L', 'K', 'M', 'F', 'P', 'S', 'T', 'W', 'Y', 'V']
+            vocab_list = special_tokens + amino_acids
+        
+        # Create vocab mapping
+        vocab_map = {token: i for i, token in enumerate(vocab_list)}
+        
+        # Create a WordLevel tokenizer that treats each character as a token
+        tokenizer = Tokenizer(WordLevel(vocab=vocab_map, unk_token=tokenizer_config.get("unk_token", "[UNK]")))
+        
+        # Important: Add character-level pre-tokenizer for protein sequences
+        from tokenizers.pre_tokenizers import Split
+        from tokenizers.normalizers import Sequence, NFD, Lowercase, StripAccents
+        import re
+        
+        # Split each character individually (character-level tokenization)
+        tokenizer.pre_tokenizer = Split(pattern=re.compile(r''), behavior='isolated')
+        
+        # Convert to fast tokenizer
+        with tempfile.TemporaryDirectory() as tempdir:
+            tokenizer_path = os.path.join(tempdir, "tokenizer.json")
+            tokenizer.save(tokenizer_path)
+            fast_tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_path)
+            
+            # Set special tokens
+            special_tokens_dict = {}
+            for token_type in ['pad_token', 'unk_token', 'cls_token', 'sep_token', 'mask_token']:
+                if hasattr(tokenizer_config, token_type):
+                    special_tokens_dict[token_type] = getattr(tokenizer_config, token_type)
+            
+            fast_tokenizer.add_special_tokens(special_tokens_dict)
+            return fast_tokenizer
     else:
         raise ValueError(f"Unsupported tokenizer type: {tokenizer_config.type}")
 

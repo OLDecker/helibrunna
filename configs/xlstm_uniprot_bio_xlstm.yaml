@@ -58,7 +58,8 @@ dataset:
   label_columns: [] # Not needed for H5 format
   
 tokenizer:
-  type: "wordlevel"
+  type: "protein"
+  path: "configs/protein_vocab.txt"
   pad_token: "[PAD]"
   unk_token: "[UNK]"
   cls_token: "[CLS]"
