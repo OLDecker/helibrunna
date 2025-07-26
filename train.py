@@ -71,7 +71,7 @@ class H5SequenceDataset(TorchDataset):
     """
     A PyTorch Dataset for reading sequences from an HDF5 file with a specific structure.
 
-    The HDF5 file is expected to contain multiple datasets named 'raw_data_X',
+    The HDF5 file is expected to contain multiple datasets named 'raw_data_',
     where X is an integer. Each of these datasets contains tuples of
     (protein_id, sequence).
 
@@ -160,7 +160,7 @@ class H5MultilabelClassificationDataset(TorchDataset):
         label_dfs = []
         try:
             with h5py.File(h5_path, 'r') as f:
-                # Find keys that correspond to pandas DataFrames (which are HDF5 groups)
+                # Find keys that correspond to pandas DataFrame objects (which are HDF5 groups)
                 # A common pattern is having 'axis1' inside the group.
                 df_keys = [key for key in f.keys() if isinstance(f[key], h5py.Group) and 'axis1' in f[key]]
 
@@ -596,14 +596,14 @@ def run_training(config_paths: list[str]):
 
     # Get debugging config
     debugging_config = config.get("debugging", {"enable": False})
-    if debugging_config.enable:
+    if debugging_config['enable']:
         accelerator.print("Comprehensive debugging enabled.")
         initial_params = {name: p.clone().detach() for name, p in model.named_parameters()}
         comprehensive_log_every_step = debugging_config.get("comprehensive_log_every_step", 1000)
         simple_log_every_step = debugging_config.get("simple_log_every_step", 100)
     else:
         # Create a dummy config to avoid errors
-        debugging_config = OmegaConf.create({"enable": False})
+        debugging_config = OmegaConf.create({"enable": False, "comprehensive_log_every_step": 0, "simple_log_every_step": 0})
 
     # Save the config as yaml and delete it.
     with open(os.path.join(output_dir, "config.yaml"), "w") as f:
@@ -817,7 +817,7 @@ def run_training(config_paths: list[str]):
                         running_labels.append(labels.detach())
 
                     # Simple gradient check
-                    if debugging_config.enable and step % simple_log_every_step == 0:
+                    if debugging_config['enable'] and step % simple_log_every_step == 0:
                         grads = [p.grad for p in model.parameters() if p.grad is not None]
                         if len(grads) > 0:
                             total_grad_norm = torch.norm(torch.stack([torch.norm(g.detach()) for g in grads])).item()
@@ -914,7 +914,7 @@ def run_training(config_paths: list[str]):
                 progress_bar.update(log_every_step)
 
             # Comprehensive debugging log
-            if debugging_config.enable and step % comprehensive_log_every_step == 0 and accelerator.is_local_main_process:
+            if debugging_config['enable'] and step % comprehensive_log_every_step == 0 and accelerator.is_local_main_process:
                 accelerator.print("\n=== COMPREHENSIVE DEBUGGING INFO ===")
                 accelerator.print(f"Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
                 accelerator.print(f"Epoch: {epoch+1}/{num_epochs}, Batch: {batch_idx}, Step: {step}")
