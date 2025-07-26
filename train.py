@@ -594,6 +594,17 @@ def run_training(config_paths: list[str]):
     # Get the model name.
     model_name = config.training.model_name
 
+    # Get debugging config
+    debugging_config = config.get("debugging", {"enable": False})
+    if debugging_config.enable:
+        accelerator.print("Comprehensive debugging enabled.")
+        initial_params = {name: p.clone().detach() for name, p in model.named_parameters()}
+        comprehensive_log_every_step = debugging_config.get("comprehensive_log_every_step", 1000)
+        simple_log_every_step = debugging_config.get("simple_log_every_step", 100)
+    else:
+        # Create a dummy config to avoid errors
+        debugging_config = OmegaConf.create({"enable": False})
+
     # Save the config as yaml and delete it.
     with open(os.path.join(output_dir, "config.yaml"), "w") as f:
         OmegaConf.save(config, f)
@@ -805,6 +816,14 @@ def run_training(config_paths: list[str]):
                         running_predictions.append(pooled_outputs.detach())
                         running_labels.append(labels.detach())
 
+                    # Simple gradient check
+                    if debugging_config.enable and step % simple_log_every_step == 0:
+                        grads = [p.grad for p in model.parameters() if p.grad is not None]
+                        if len(grads) > 0:
+                            total_grad_norm = torch.norm(torch.stack([torch.norm(g.detach()) for g in grads])).item()
+                            accelerator.print(f"Simple gradient check at step {step}: {len(grads)} params have gradients. Total norm: {total_grad_norm:.4f}")
+                        else:
+                            accelerator.print(f"Simple gradient check at step {step}: No gradients found.")
             else: # Language Modeling
                 inputs = batch['input_ids'].to(accelerator.device)
                 if model_type == "bert":
@@ -893,6 +912,40 @@ def run_training(config_paths: list[str]):
                 # Update the progressbar. Use the step as the total. Also display the loss and lr.
                 progress_bar.set_postfix({"loss": average_loss, "lr": last_lr, "epoch": epoch_fraction})
                 progress_bar.update(log_every_step)
+
+            # Comprehensive debugging log
+            if debugging_config.enable and step % comprehensive_log_every_step == 0 and accelerator.is_local_main_process:
+                accelerator.print("\n=== COMPREHENSIVE DEBUGGING INFO ===")
+                accelerator.print(f"Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                accelerator.print(f"Epoch: {epoch+1}/{num_epochs}, Batch: {batch_idx}, Step: {step}")
+                accelerator.print(f"Current loss: {average_loss:.6f}")
+                accelerator.print(f"Learning rate: {lr_scheduler.get_last_lr()[0]:.8f}")
+
+                # Key parameter statistics
+                accelerator.print("Key parameter statistics:")
+                for name, p in model.named_parameters():
+                    if "weight" in name or "bias" in name or "learnable_skip" in name:
+                        if p.requires_grad:
+                            norm = torch.norm(p.data).item()
+                            max_val = torch.max(torch.abs(p.data)).item()
+                            std_val = torch.std(p.data).item()
+                            accelerator.print(f"  {name}: norm={norm:.4f}, max={max_val:.4f}, std={std_val:.4f}")
+
+                # Parameter changes since initialization
+                accelerator.print("Parameter changes since initialization:")
+                for name, p in model.named_parameters():
+                    if p.requires_grad:
+                        change = torch.norm(p.data - initial_params[name]).item()
+                        accelerator.print(f"  {name}: change={change:.6f}")
+                
+                # Gradient statistics
+                accelerator.print("Gradient statistics:")
+                for name, p in model.named_parameters():
+                    if p.grad is not None:
+                        grad_norm = torch.norm(p.grad.data).item()
+                        grad_max = torch.max(torch.abs(p.grad.data)).item()
+                        accelerator.print(f"  {name}: grad_norm={grad_norm:.6f}, grad_max={grad_max:.6f}")
+                accelerator.print("=== END COMPREHENSIVE DEBUGGING INFO ===\n")
             
             # Evaluate on validation set every eval_every_step
             if step % eval_every_step == 0 and step > 0 and eval_every_step > 0 and accelerator.is_local_main_process:

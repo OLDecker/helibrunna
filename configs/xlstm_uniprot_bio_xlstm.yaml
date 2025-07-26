@@ -26,6 +26,11 @@ training:
   log_every_step: 100
   eval_every_step: 5000
 
+  debugging:
+    enable: true
+    comprehensive_log_every_step: 100
+    simple_log_every_step: 100
+
 model:
   type: xLSTMLMModel
   context_length: 1024
