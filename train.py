@@ -695,10 +695,13 @@ def run_training(config_paths: list[str]):
             
             # Compute metrics
             metrics = compute_multilabel_metrics(all_predictions, all_labels)
-            metrics["val_loss"] = total_loss / num_batches if num_batches > 0 else 0.0
             
-            accelerator.print(f"Validation metrics: {metrics}")
-            return metrics
+            # Add "val_" prefix to all metrics for clarity in logging
+            val_metrics = {f"val_{key}": value for key, value in metrics.items()}
+            val_metrics["val_loss"] = total_loss / num_batches if num_batches > 0 else 0.0
+            
+            accelerator.print(f"Validation metrics: {val_metrics}")
+            return val_metrics
         
         return {"val_loss": total_loss / num_batches if num_batches > 0 else 0.0}
 
