@@ -35,7 +35,7 @@ import urllib.request
 from tqdm import tqdm
 from tokenizers import Tokenizer
 from tokenizers.models import WordLevel, BPE
-from tokenizers.pre_tokenizers import WhitespaceSplit
+from tokenizers.pre_tokenizers import WhitespaceSplit, Split
 from tokenizers.trainers import WordLevelTrainer, BpeTrainer
 from torch.utils.data import DataLoader, Dataset as TorchDataset
 from transformers import DataCollatorForLanguageModeling, DataCollatorWithPadding
@@ -1677,6 +1677,46 @@ def create_tokenizer(tokenizer_config):
     elif tokenizer_config.type == "char":
         # Character-level tokenizer (for backward compatibility)
         return train_char_tokenizer(None, None, tokenizer_config)
+    
+    elif tokenizer_config.type == "protein":
+        # Protein character-level tokenizer
+        vocab_path = tokenizer_config.path
+        with open(vocab_path, 'r') as f:
+            vocab = [line.strip() for line in f if line.strip()]
+        
+        # Create vocab mapping
+        vocab_map = {token: i for i, token in enumerate(vocab)}
+        
+        # Create base tokenizer for character-level tokenization
+        tokenizer = Tokenizer(WordLevel(vocab=vocab_map, unk_token=tokenizer_config.unk_token))
+        
+        # For protein sequences, we don't use a pre-tokenizer since we want each character
+        # to be treated as a separate token. The MultilabelDataCollator will handle
+        # character-level tokenization by calling the tokenizer directly on protein strings.
+        
+        # Convert to fast tokenizer
+        with tempfile.TemporaryDirectory() as tempdir:
+            tokenizer_path = os.path.join(tempdir, "tokenizer.json")
+            tokenizer.save(tokenizer_path)
+            fast_tokenizer = PreTrainedTokenizerFast(
+                tokenizer_file=tokenizer_path,
+                clean_up_tokenization_spaces=False,
+                model_max_length=1024  # Protein sequences can be longer
+            )
+            
+            # Set special tokens (don't add them as they're already in vocab)
+            if hasattr(tokenizer_config, 'pad_token'):
+                fast_tokenizer.pad_token = tokenizer_config.pad_token
+            if hasattr(tokenizer_config, 'unk_token'):
+                fast_tokenizer.unk_token = tokenizer_config.unk_token
+            if hasattr(tokenizer_config, 'cls_token'):
+                fast_tokenizer.cls_token = tokenizer_config.cls_token
+            if hasattr(tokenizer_config, 'sep_token'):
+                fast_tokenizer.sep_token = tokenizer_config.sep_token
+            if hasattr(tokenizer_config, 'mask_token'):
+                fast_tokenizer.mask_token = tokenizer_config.mask_token
+        
+        return fast_tokenizer
     
     else:
         raise ValueError(f"Unsupported tokenizer type: {tokenizer_config.type}")
