@@ -1162,20 +1162,32 @@ def preprocess_for_multilabel_classification(config, accelerator, ask_for_overwr
             time.sleep(1)
         tokenizer = PreTrainedTokenizerFast.from_pretrained(tokenizer_path)
 
-    # Now, create the dataset instance.
-    accelerator.print("Creating H5 multilabel dataset...")
-    dataset = H5MultilabelClassificationDataset(
+    # Now, create the dataset instances.
+    accelerator.print("Creating H5 multilabel datasets...")
+    
+    # Create training dataset
+    train_dataset = H5MultilabelClassificationDataset(
         csv_path=config.dataset.path,
-        h5_path=config.dataset.train_path,  # Updated to use train_path
+        h5_path=config.dataset.train_path,
         sequence_column=config.dataset.sequence_column,
         id_column=config.dataset.id_column,
         accelerator=accelerator
     )
     
-    # The training loop expects a dictionary-like object for datasets.
-    # We'll wrap our single dataset in a simple dictionary.
-    datasets = {"train": dataset}
-    num_classes = dataset.num_classes
+    datasets = {"train": train_dataset}
+    num_classes = train_dataset.num_classes
+
+    # Create validation dataset if a path is provided
+    if hasattr(config.dataset, 'val_path') and config.dataset.val_path:
+        accelerator.print("Creating H5 validation dataset...")
+        val_dataset = H5MultilabelClassificationDataset(
+            csv_path=config.dataset.path,
+            h5_path=config.dataset.val_path,
+            sequence_column=config.dataset.sequence_column,
+            id_column=config.dataset.id_column,
+            accelerator=accelerator
+        )
+        datasets["validation"] = val_dataset
 
     return datasets, tokenizer, num_classes
 
