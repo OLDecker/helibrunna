@@ -5,7 +5,7 @@
 #SBATCH --gres=gpu:A40:1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=3
-#SBATCH --time=00:05:00
+#SBATCH --time=00:10:00
 #SBATCH --mem=32gb
 #SBATCH --export=NONE
 
