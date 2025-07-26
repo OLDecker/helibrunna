@@ -672,11 +672,17 @@ def run_training(config_paths: list[str]):
                 else:
                     pooled_outputs = outputs[:, -1, :]
                 
-                # Compute loss
+                # Compute loss - get pos_weight from training dataset if available
+                current_pos_weight = None
+                if task_type == "multilabel_classification":
+                    train_dataset = tokenized_datasets["train"]
+                    if hasattr(train_dataset, 'pos_weight'):
+                        current_pos_weight = train_dataset.pos_weight.to(accelerator.device)
+                
                 loss = torch.nn.functional.binary_cross_entropy_with_logits(
                     pooled_outputs, 
                     labels,
-                    pos_weight=pos_weight
+                    pos_weight=current_pos_weight
                 )
                 
                 total_loss += loss.item()
