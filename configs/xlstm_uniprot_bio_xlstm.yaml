@@ -10,12 +10,13 @@ training:
   batch_size: 16
   num_epochs: 10
   lr: 6.0e-4
-  lr_scheduler_type: "cosine"
+  lr_scheduler_type: "linear"
   lr_warmup_steps: 1000
-  lr_decay_until_steps: "auto"
+  lr_decay_until_steps: 200000
   lr_decay_factor: 0.1
   weight_decay: 0.1
   gradient_accumulation_steps: 4
+  max_steps: 200000
   amp_precision: bfloat16
   weight_precision: float32
   enable_mixed_precision: true

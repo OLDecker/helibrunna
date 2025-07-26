@@ -225,8 +225,8 @@ class H5MultilabelClassificationDataset(TorchDataset):
 class MultilabelDataCollator:
     """
     Data collator for multilabel classification.
-    Tokenizes sequences and pads them, and stacks labels.
-    BERT-compatible tokenization with special tokens.
+    Tokenizes protein sequences character-by-character and pads them, and stacks labels.
+    Character-level tokenization for individual amino acids.
     """
     def __init__(self, tokenizer, max_length):
         self.tokenizer = tokenizer
@@ -236,19 +236,50 @@ class MultilabelDataCollator:
         sequences = [example["sequence"] for example in examples]
         labels = [example["labels"] for example in examples]
 
-        # Use BERT-style batch encoding for consistency
-        batch = self.tokenizer.batch_encode_plus(
-            sequences,
-            max_length=self.max_length,
-            padding=True,
-            truncation=True,
-            add_special_tokens=True,  # Add [CLS] and [SEP] like BERT
-            return_attention_mask=True,  # For better sequence handling
-            return_token_type_ids=False,  # Not needed for single sequences
-            return_tensors="pt"
-        )
+        # For protein sequences, we need character-level tokenization
+        # Convert each amino acid to its token ID individually
+        input_ids_list = []
+        attention_mask_list = []
         
-        batch["labels"] = torch.stack(labels)
+        for sequence in sequences:
+            # Convert sequence to individual characters (amino acids)
+            sequence_chars = list(sequence)
+            
+            # Add special tokens like [CLS] at start and [SEP] at end if they exist
+            tokens = []
+            if hasattr(self.tokenizer, 'cls_token') and self.tokenizer.cls_token:
+                tokens.append(self.tokenizer.cls_token)
+            
+            tokens.extend(sequence_chars)
+            
+            if hasattr(self.tokenizer, 'sep_token') and self.tokenizer.sep_token:
+                tokens.append(self.tokenizer.sep_token)
+            
+            # Convert tokens to IDs
+            token_ids = self.tokenizer.convert_tokens_to_ids(tokens)
+            
+            # Truncate if necessary
+            if len(token_ids) > self.max_length:
+                token_ids = token_ids[:self.max_length]
+            
+            # Create attention mask (1 for real tokens, 0 for padding)
+            attention_mask = [1] * len(token_ids)
+            
+            # Pad if necessary
+            pad_token_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
+            while len(token_ids) < self.max_length:
+                token_ids.append(pad_token_id)
+                attention_mask.append(0)
+            
+            input_ids_list.append(token_ids)
+            attention_mask_list.append(attention_mask)
+        
+        # Convert to tensors
+        batch = {
+            "input_ids": torch.tensor(input_ids_list, dtype=torch.long),
+            "attention_mask": torch.tensor(attention_mask_list, dtype=torch.long),
+            "labels": torch.stack(labels)
+        }
         
         return batch
 
