@@ -7,15 +7,15 @@ training:
   model_name: xlstm_uniprot_bio_xlstm
   output_dir: ./output/xlstm_uniprot_bio_xlstm
   task_type: multilabel_classification
-  batch_size: 16
+  batch_size: 4
   num_epochs: 10
   lr: 6.0e-4
   lr_scheduler_type: "linear"
-  lr_warmup_steps: 1000
+  lr_warmup_steps: 500
   lr_decay_until_steps: 200000
   lr_decay_factor: 0.1
   weight_decay: 0.1
-  gradient_accumulation_steps: 4
+  gradient_accumulation_steps: 2
   max_steps: 200000
   amp_precision: bfloat16
   weight_precision: float32
