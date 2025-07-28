@@ -146,28 +146,54 @@ class H5MultilabelClassificationDataset(TorchDataset):
     and corresponding multi-hot encoded labels from an HDF5 file where labels are
     stored as pandas DataFrames.
     """
-    def __init__(self, csv_path: str, h5_path: str, sequence_column: str, id_column: str, accelerator, separator: str = '\t'):
+    def __init__(self, csv_path: str, h5_path: str, sequence_column: str, id_column: str, accelerator, separator: str = '\t', ds_size: str = "large"):
         self.accelerator = accelerator
         self.sequence_column = sequence_column
         self.id_column = id_column
+        self.ds_size = ds_size
 
         # Load sequences from CSV and set index
         self.accelerator.print(f"Loading sequences from {csv_path}...")
         self.dataframe = pd.read_csv(csv_path, sep=separator).set_index(id_column)
         
-        # Load and combine label DataFrames from HDF5
-        self.accelerator.print(f"Loading labels from {h5_path}...")
+        # Load and combine label DataFrames from HDF5 with ds_size filtering
+        self.accelerator.print(f"Loading labels from {h5_path} with ds_size={ds_size}...")
         label_dfs = []
         try:
             with h5py.File(h5_path, 'r') as f:
                 # Find keys that correspond to pandas DataFrame objects (which are HDF5 groups)
                 # A common pattern is having 'axis1' inside the group.
-                df_keys = [key for key in f.keys() if isinstance(f[key], h5py.Group) and 'axis1' in f[key]]
+                all_df_keys = [key for key in f.keys() if isinstance(f[key], h5py.Group) and 'axis1' in f[key]]
 
-            if not df_keys:
+            if not all_df_keys:
                 raise ValueError(f"Could not find any pandas DataFrame objects in H5 file: {h5_path}")
 
-            self.accelerator.print(f"Found label DataFrames in H5 keys: {df_keys}")
+            # Apply ds_size filtering to select subset of DataFrame keys
+            if ds_size == "medium":
+                # For medium, select specific filtered tables (matching BERT model)
+                # Look for keys that contain medium-specific identifiers or take subset
+                filtered_keys = []
+                for key in all_df_keys:
+                    # Look for keys that indicate medium dataset size
+                    # Based on BERT model pattern, these might be tables with specific GO term counts
+                    if any(identifier in key.lower() for identifier in ['medium', '_50_', '_100_', '_200_']):
+                        filtered_keys.append(key)
+                
+                # If no medium-specific keys found, use a subset of available keys
+                if not filtered_keys:
+                    # Take first half of available keys as medium subset
+                    filtered_keys = all_df_keys[:len(all_df_keys)//2]
+                    self.accelerator.print(f"No medium-specific keys found, using subset: {len(filtered_keys)} of {len(all_df_keys)} tables")
+                
+                df_keys = filtered_keys
+            elif ds_size == "small":
+                # For small, take even fewer keys
+                df_keys = all_df_keys[:len(all_df_keys)//4]
+            else:  # "large" or default
+                # Use all available keys
+                df_keys = all_df_keys
+
+            self.accelerator.print(f"Using {len(df_keys)} label tables for ds_size='{ds_size}': {df_keys}")
 
             for key in df_keys:
                 df = pd.read_hdf(h5_path, key=key)
@@ -203,12 +229,12 @@ class H5MultilabelClassificationDataset(TorchDataset):
         self.pos_weight = torch.ones_like(num_positives)
         has_positives = num_positives > 0
         self.pos_weight[has_positives] = num_negatives[has_positives] / num_positives[has_positives]
-        self.accelerator.print(f"Calculated pos_weight for {self.num_classes} classes.")
+        self.accelerator.print(f"Calculated pos_weight for {self.num_classes} classes with ds_size='{ds_size}'.")
 
         # Reset index to allow for integer-based indexing in __getitem__
         self.dataframe.reset_index(inplace=True)
 
-        self.accelerator.print(f"Initialized H5MultilabelClassificationDataset with {len(self.dataframe)} aligned samples and {self.num_classes} classes.")
+        self.accelerator.print(f"Initialized H5MultilabelClassificationDataset with {len(self.dataframe)} aligned samples and {self.num_classes} classes (ds_size='{ds_size}').")
 
     def __len__(self):
         return len(self.dataframe)
@@ -1224,13 +1250,17 @@ def preprocess_for_multilabel_classification(config, accelerator, ask_for_overwr
     # Now, create the dataset instances.
     accelerator.print("Creating H5 multilabel datasets...")
     
+    # Get ds_size from config, default to "large"
+    ds_size = config.dataset.get("ds_size", "large")
+    
     # Create training dataset
     train_dataset = H5MultilabelClassificationDataset(
         csv_path=config.dataset.path,
         h5_path=config.dataset.train_path,
         sequence_column=config.dataset.sequence_column,
         id_column=config.dataset.id_column,
-        accelerator=accelerator
+        accelerator=accelerator,
+        ds_size=ds_size
     )
     
     datasets = {"train": train_dataset}
@@ -1244,7 +1274,8 @@ def preprocess_for_multilabel_classification(config, accelerator, ask_for_overwr
             h5_path=config.dataset.val_path,
             sequence_column=config.dataset.sequence_column,
             id_column=config.dataset.id_column,
-            accelerator=accelerator
+            accelerator=accelerator,
+            ds_size=ds_size
         )
         datasets["validation"] = val_dataset
 

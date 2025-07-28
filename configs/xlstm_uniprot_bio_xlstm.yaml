@@ -62,6 +62,7 @@ dataset:
   sequence_column: "Sequence"
   id_column: "Entry"
   label_columns: [] # Not needed for H5 format
+  ds_size: "medium"  # Dataset size filtering: small, medium, large (matches BERT model)
   
 tokenizer:
   type: "protein"
